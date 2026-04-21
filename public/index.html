@@ -91,7 +91,7 @@ async function callAPI(anamnese, letzter, studioTipps) {
   let msg = "ANAMNESE:\n" + anamnese;
   if (letzter && letzter.trim()) msg += "\n\nLETZTER TERMIN:\n" + letzter;
   try {
-    const r = await fetch("/.netlify/functions/api", {
+    const r = await fetch("/api/generate", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1000, system: buildSYS(studioTipps), messages: [{ role: "user", content: msg }] }),
     });
@@ -103,7 +103,7 @@ async function callAPI(anamnese, letzter, studioTipps) {
 
 async function parseScreenshot(base64) {
   try {
-    const r = await fetch("/.netlify/functions/api", {
+    const r = await fetch("/api/generate", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "claude-sonnet-4-6", max_tokens: 1000,
