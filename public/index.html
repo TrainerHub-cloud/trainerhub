@@ -85,7 +85,7 @@ async function callAPI(anamnese, letzter) {
   try {
     const r = await fetch("/.netlify/functions/api", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, system: SYS, messages: [{ role: "user", content: msg }] }),
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1000, system: SYS, messages: [{ role: "user", content: msg }] }),
     });
     if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || "API Fehler " + r.status); }
     const d = await r.json();
