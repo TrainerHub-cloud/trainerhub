@@ -413,7 +413,7 @@ function DashboardView({ trainer }) {
     {!data.length ? <div className="text-center py-12 text-gray-400 text-sm">Keine Erfolge im gewählten Zeitraum.</div> : (<div>
       <div className={`grid ${isL ? "grid-cols-4" : "grid-cols-3"} gap-3 mb-4`}>
         {[{ v: data.length, l: "Termine" }, { v: totalV, l: "Verkäufe", c: "text-emerald-600" },
-          { v: data.length ? (totalU / data.length).toFixed(0) + "€", l: "Ø Umsatz/Termin" },
+          { v: data.length ? (totalU / data.length).toFixed(0) + "€" : "0€", l: "Ø Umsatz/Termin" },
           ...(isL ? [{ v: totalU.toFixed(0) + "€", l: "Gesamtumsatz", c: "text-emerald-600" }] : [])
         ].map((k, i) => (
           <div key={i} className="bg-white border border-gray-200 rounded-lg p-4 text-center"><div className={`text-2xl font-black ${k.c || "text-gray-900"}`}>{k.v}</div><div className="text-xs text-gray-500 mt-1">{k.l}</div></div>))}
