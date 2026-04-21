@@ -117,7 +117,7 @@ async function parseScreenshot(base64) {
     if (!r.ok) throw new Error("API Fehler");
     const d = await r.json();
     const txt = d.content.filter(b => b.type === "text").map(b => b.text).join("");
-    const clean = txt.replace(/```json|```/g, "").trim();
+    const clean = txt.replace(/`{3}json|`{3}/g, "").trim();
     return JSON.parse(clean);
   } catch (e) { return []; }
 }
@@ -316,7 +316,7 @@ function StudioTippsView({ tipps, setTipps }) {
     <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Studio-spezifische Trainingstipps</div>
     <p className="text-sm text-gray-600 mb-4">Diese Tipps fließen automatisch in jedes Briefing ein. Nutze sie für aktuelle Aktionen, Geräte-Empfehlungen oder saisonale Schwerpunkte.</p>
     {saved && <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-700 font-medium">✓ Gespeichert</div>}
-    <textarea value={val} onChange={e => setVal(e.target.value)} rows="8" placeholder="z.B.&#10;- Aktuell Figuroffensive: Bei Abnehmzielen immer myshape empfehlen&#10;- Neues eGym Update: Bio-Feedback Modus besonders für Rücken-Mitglieder empfehlen&#10;- Sensopro Challenger Challenge läuft bis Ende Mai" className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none resize-none bg-white" />
+    <textarea value={val} onChange={e => setVal(e.target.value)} rows="8" placeholder="z.B. Aktuell Figuroffensive: Bei Abnehmzielen immer myshape empfehlen. Neues eGym Update: Bio-Feedback Modus besonders für Rücken-Mitglieder empfehlen." className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none resize-none bg-white" />
     <button onClick={save} className="mt-3 w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-sm transition-colors">Tipps speichern</button>
   </div>);
 }
@@ -411,7 +411,7 @@ function DashboardView({ trainer }) {
     </div>
 
     {!data.length ? <div className="text-center py-12 text-gray-400 text-sm">Keine Erfolge im gewählten Zeitraum.</div> : (<div>
-      <div className={`grid ${isL ? "grid-cols-3" : "grid-cols-3"} gap-3 mb-4`}>
+      <div className={`grid ${isL ? "grid-cols-4" : "grid-cols-3"} gap-3 mb-4`}>
         {[{ v: data.length, l: "Termine" }, { v: totalV, l: "Verkäufe", c: "text-emerald-600" },
           { v: data.length ? (totalU / data.length).toFixed(0) + "€", l: "Ø Umsatz/Termin" },
           ...(isL ? [{ v: totalU.toFixed(0) + "€", l: "Gesamtumsatz", c: "text-emerald-600" }] : [])
