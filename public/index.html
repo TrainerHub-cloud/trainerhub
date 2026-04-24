@@ -16,7 +16,7 @@
 <script type="text/babel" data-type="module">
 const { useState, useEffect, useCallback, useRef } = React;
 
-const STUDIOS = ["Aumund", "Burglesum", "Horn", "Brinkum", "Delmenhorst"];
+const STUDIOS = ["Becketal", "Burglesum", "Horn", "Brinkum", "Delmenhorst"];
 const TERMINARTEN = [
   { id: "erst", label: "Ersttermin" },
   { id: "tp", label: "Trainingsplanung" },
@@ -47,13 +47,18 @@ const DEFAULT_USERS = [
   { id: "u1", name: "Hendrik", studio: "Brinkum", rolle: "leitung", pin: "1234" },
   { id: "u2", name: "Tommy", studio: "Brinkum", rolle: "trainer", pin: "0000" },
   { id: "u3", name: "Jan", studio: "Brinkum", rolle: "trainer", pin: "0000" },
+  { id: "u4", name: "Vivien", studio: "Becketal", rolle: "leitung", pin: "1234" },
+  { id: "u5", name: "Janine", studio: "Burglesum", rolle: "leitung", pin: "1234" },
+  { id: "u6", name: "Hannes", studio: "Horn", rolle: "leitung", pin: "1234" },
+  { id: "u7", name: "Daniel", studio: "Delmenhorst", rolle: "leitung", pin: "1234" },
 ];
 
 const DEFAULT_COMPANY = { name: "FITNESS PARK", password: "fitnesspark2026" };
 
 function buildSYS(studioTipps) {
-  let base = `Du bist TrainerHub, ein AI-Copilot für Fitnesstrainer. Erstelle aus der Anamnese ein Trainer-Briefing.
-REGELN: Deutsch. Max 300 Wörter. 30-Sekunden-Scan. Du sprichst den Trainer an. "Die Person" oder Vorname. Keine Aufgaben fürs Mitglied außerhalb des Studios. Sicherheit first. Keine Erfindungen. Evidenzbasiert.
+  let base = `Du bist TrainerHub, ein AI-Copilot für Fitnesstrainer im Premium-Segment. Erstelle aus der Anamnese ein strukturiertes Trainer-Briefing.
+REGELN: Deutsch. Max 300 Wörter. 30-Sekunden-Scan. Du sprichst den Trainer an. "Die Person" oder Vorname. Keine Aufgaben fürs Mitglied außerhalb des Studios. Sicherheit first. Keine Erfindungen.
+EVIDENZ-PFLICHT: Jeder Trainingsimpuls MUSS auf einer konkreten Studie oder Leitlinie basieren. Gib die Quelle in Klammern an (Autor, Jahr ODER Leitlinie z.B. ACSM, NSCA). Wenn du für einen Impuls KEINE Studie benennen kannst, formuliere ihn so: "Keine direkte Studienlage verfügbar. Basierend auf vergleichbaren Befunden zu [ähnliches Krankheitsbild/Faktor] wird empfohlen: [Empfehlung] (Quelle der analogen Evidenz)." Erfinde NIEMALS eine Studie oder einen Autor. Im Zweifel lieber weniger Impulse mit solider Evidenz als viele ohne Grundlage. Qualität vor Quantität — wir sind ein Premium-Studio.
 STUDIO-DATEN FITNESS PARK:
 - Intensivbetreuung + Sensopro: €2/Woche (Koordination, Rumpfstabilität, Challenger-Tracking, Trainertermine alle 3 Monate)
 - Betreuungsstufen: Basic (2x/Jahr) → Intensive (€2/Wo) → Personal (ab €89,90/h)
@@ -72,7 +77,8 @@ ERNÄHRUNG: Eiweiß ~1,6g/kg/Tag optimal (Morton et al. 2018, n=1863). Whey/Koll
 ### PERSON AUF EINEN BLICK
 - 4-5 Stichpunkte, je max 8 Wörter
 ### TRAININGSIMPULSE
-- 3-5 kurze Denkanstöße, Format: **Impuls** — Begründung
+- 3-5 kurze Denkanstöße, Format: **Impuls** — Begründung (Quelle)
+- JEDER Impuls mit Studienreferenz oder Leitlinie. Ohne Evidenz: transparent kennzeichnen.
 ### ACHTUNG
 - NICHT: [Was] — WEIL: [Begründung aus Anamnese]
 ### VERKAUFSANKER
@@ -392,8 +398,11 @@ function DashboardView({ trainer }) {
   const isL = trainer.rolle === "leitung";
   const [von, setVon] = useState("");
   const [bis, setBis] = useState("");
-  const allData = loadLS("th_erfolge", []).filter(x => isL ? x.studio === trainer.studio : x.studio === trainer.studio && x.trainer === trainer.name);
-  const data = allData.filter(e => {
+  const allErfolge = loadLS("th_erfolge", []);
+  const studioData = allErfolge.filter(x => x.studio === trainer.studio);
+  const myData = allErfolge.filter(x => x.studio === trainer.studio && x.trainer === trainer.name);
+  const baseData = isL ? studioData : myData;
+  const data = baseData.filter(e => {
     const d = new Date(e.datum);
     if (von && d < new Date(von)) return false;
     if (bis) { const b = new Date(bis); b.setHours(23,59,59); if (d > b) return false; }
@@ -411,6 +420,20 @@ function DashboardView({ trainer }) {
   const ac = {};
   data.forEach(e => { const l = TERMINARTEN.find(t => t.id === e.terminart)?.label || e.terminart; ac[l] = (ac[l] || 0) + 1; });
 
+  const studioVergleich = {};
+  if (isL) {
+    allErfolge.filter(e => {
+      const d = new Date(e.datum);
+      if (von && d < new Date(von)) return false;
+      if (bis) { const b = new Date(bis); b.setHours(23,59,59); if (d > b) return false; }
+      return true;
+    }).forEach(e => {
+      studioVergleich[e.studio] = studioVergleich[e.studio] || { termine: 0, verkaufe: 0, umsatz: 0 };
+      studioVergleich[e.studio].termine++;
+      (e.verkauft || []).forEach(v => { studioVergleich[e.studio].verkaufe++; studioVergleich[e.studio].umsatz += (v.preis || 0); });
+    });
+  }
+
   return (<div className="max-w-4xl mx-auto p-4">
     <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Dashboard · {isL ? trainer.studio : trainer.name}</div>
     <div className="flex items-center gap-3 mb-4">
@@ -420,47 +443,17 @@ function DashboardView({ trainer }) {
     </div>
 
     {!data.length ? <div className="text-center py-12 text-gray-400 text-sm">Keine Erfolge im gewählten Zeitraum.</div> : (<div>
-      <div className={`grid ${isL ? "grid-cols-4" : "grid-cols-3"} gap-3 mb-4`}>
+      <div className="grid grid-cols-4 gap-3 mb-4">
         {[{ v: data.length, l: "Termine" }, { v: totalV, l: "Verkäufe", c: "text-emerald-600" },
           { v: data.length ? ((totalU / data.length).toFixed(0) + "€") : "0€", l: "Ø Umsatz/Termin" },
-          ...(isL ? [{ v: totalU.toFixed(0) + "€", l: "Gesamtumsatz", c: "text-emerald-600" }] : [])
+          { v: totalU.toFixed(0) + "€", l: "Gesamtumsatz", c: "text-emerald-600" }
         ].map((k, i) => (
           <div key={i} className="bg-white border border-gray-200 rounded-lg p-4 text-center"><div className={`text-2xl font-black ${k.c || "text-gray-900"}`}>{k.v}</div><div className="text-xs text-gray-500 mt-1">{k.l}</div></div>))}
       </div>
       <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4"><div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Produkt-Ranking</div><div className="space-y-2">{sp.map(p => (<div key={p.id} className="flex items-center gap-3">
         <div className="w-44 text-xs text-gray-600 truncate flex-shrink-0">{p.name}</div>
         <div className="flex-1 h-5 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-emerald-500 rounded-full" style={{ width: Math.max((p.count / mx) * 100, 0) + "%", minWidth: p.count > 0 ? "8px" : "0" }} /></div>
-        <div className="text-xs font-bold text-gray-700 w-6 text-right">{p.count}×</div>
+        <div className="text-xs font-bold text-gray-700 w-6 text-right">{p.count}x</div>
       </div>))}</div></div>
-      {isL && Object.keys(tc).length > 0 && (<div className="bg-white border border-gray-200 rounded-lg p-4 mb-4"><div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Trainer-Performance</div><div className="space-y-2">{Object.entries(tc).sort(([,a],[,b]) => b.u - a.u).map(([n, d]) => (<div key={n} className="flex items-center justify-between text-sm border-b border-gray-100 pb-2 last:border-0"><span className="text-gray-700 font-medium">{n}</span><div className="flex gap-4 text-xs"><span className="text-gray-500">{d.c} Termine</span><span className="text-gray-700 font-bold">{d.v} Verkäufe</span><span className="text-emerald-600 font-bold">{d.u.toFixed(0)}€</span><span className="text-gray-400">Ø {d.c ? (d.u / d.c).toFixed(0) : 0}€/Termin</span></div></div>))}</div></div>)}
-      <div className="bg-white border border-gray-200 rounded-lg p-4"><div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Terminarten</div><div className="flex gap-6">{Object.entries(ac).map(([l, c]) => (<div key={l} className="text-center"><div className="text-lg font-black text-gray-900">{c}</div><div className="text-xs text-gray-500">{l}</div></div>))}</div></div>
-    </div>)}
-  </div>);
-}
-
-function App() {
-  const [view, setView] = useState("login");
-  const [trainer, setTrainer] = useState(null);
-  const [produkte, setProdukte] = useState(() => loadLS("th_produkte", null) || DEFAULT_PRODUKTE);
-  const [users, setUsers] = useState(() => loadLS("th_users", null) || DEFAULT_USERS);
-  const [studioTipps, setStudioTipps] = useState(() => loadLS("th_studiotipps", "") || "");
-  const company = loadLS("th_company", null) || DEFAULT_COMPANY;
-
-  if (view === "login" || !trainer) return <Login users={users} company={company} onLogin={t => { setTrainer(t); setView("briefing"); }} />;
-  return (<div className="min-h-screen bg-gray-50">
-    <Nav view={view} setView={setView} trainer={trainer} onLogout={() => { setTrainer(null); setView("login"); }} />
-    <div className="py-4">
-      {view === "briefing" && <BriefingView studioTipps={studioTipps} />}
-      {view === "erfolge" && <ErfolgeView trainer={trainer} produkte={produkte} />}
-      {view === "dashboard" && <DashboardView trainer={trainer} />}
-      {view === "team" && trainer.rolle === "leitung" && <TeamView users={users} setUsers={setUsers} />}
-      {view === "produkte" && trainer.rolle === "leitung" && <ProdukteView produkte={produkte} setProdukte={setProdukte} />}
-      {view === "tipps" && trainer.rolle === "leitung" && <StudioTippsView tipps={studioTipps} setTipps={setStudioTipps} />}
-    </div>
-  </div>);
-}
-
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-</script>
-</body>
-</html>
+      {isL && Object.keys(tc).length > 0 && (<div className="bg-white border border-gray-200 rounded-lg p-4 mb-4"><div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Trainer-Performance</div><div className="space-y-2">{Object.entries(tc).sort(([,a],[,b]) => b.u - a.u).map(([n, d]) => (<div key={n} className="flex items-center justify-between text-sm border-b border-gray-100 pb-2 last:border-0"><span className="text-gray-700 font-medium">{n}</span><div className="flex gap-4 text-xs"><span className="text-gray-500">{d.c} Termine</span><span className="text-gray-700 font-bold">{d.v} Verkaufe</span><span className="text-emerald-600 font-bold">{d.u.toFixed(0)}€</span><span className="text-gray-400">O {d.c ? (d.u / d.c).toFixed(0) : 0}€/Termin</span></div></div>))}</div></div>)}
+      <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4"><div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Terminarten</div><div className="flex gap-6">{Object.entrie
