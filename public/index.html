@@ -1,0 +1,2181 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+  <meta name="googlebot" content="noindex, nofollow">
+  <title>TrainerHub</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>💪</text></svg>">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>body{margin:0;font-family:system-ui,-apple-system,sans-serif}*{box-sizing:border-box}</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useCallback, useRef } = React;
+
+const SB_URL = "https://rgtivdzmtfulnzbqzeou.supabase.co";
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJndGl2ZHptdGZ1bG56YnF6ZW91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcwNDAzMzYsImV4cCI6MjA5MjYxNjMzNn0.0TSBtFAOrFV8tHMHcKzJj5eFP5zU-RvE5Nm160Jjxt0";
+const sb = window.supabase.createClient(SB_URL, SB_KEY);
+
+const STUDIOS = ["Becketal", "Burglesum", "Horn", "Brinkum", "Delmenhorst"];
+// Terminarten werden dynamisch aus der Tabelle terminarten geladen (siehe App-State).
+// Fallback nur falls Load fehlschlägt:
+const TERMINARTEN_FALLBACK = [
+  { id: "t_sonstige", label: "Sonstige" },
+];
+// ID des Spezial-Produkts für hart gelöschte Produkte (siehe migration_geloescht_produkt.sql)
+const DELETED_PRODUKT_ID = "p_geloescht";
+const DELETED_PRODUKT_NAME = "Gelöscht";
+// Kategorien werden dynamisch aus der Tabelle kategorien geladen (siehe App-State).
+// Fallback nur falls Load fehlschlägt:
+const KATEGORIEN_FALLBACK = ["Betreuung", "Kurs", "Diagnostik", "Produkt", "Wellness", "Abnehmen", "Sonstige"];
+// Authentifizierung läuft über Supabase Auth — kein Company-Passwort mehr im Frontend.
+
+function buildSYS(studioTipps, studio, geraete, studioProdukte, mode) {
+  // mode: "kompakt" (default) oder "detail"
+  const isDetail = mode === "detail";
+  let base = "Du bist TrainerHub, ein AI-Copilot für Fitnesstrainer im Premium-Segment. Erstelle aus der Anamnese ein strukturiertes Trainer-Briefing.\n";
+  if (isDetail) {
+    base += "MODUS: AUSFÜHRLICH. Ziel: 500-600 Wörter, 2-3 Min Lesezeit. Tiefere Begründungen, mehr Studien, ausführlichere Trainingsplanung. Trotzdem strukturiert und scanbar.\n";
+  } else {
+    base += "MODUS: KOMPAKT. Ziel: max 200 Wörter, 30-Sekunden-Scan. Kurz, präzise, auf das Wesentliche reduziert. Keine ausschmückenden Begründungen.\n";
+  }
+  base += "REGELN: Deutsch. Du sprichst den Trainer an. Sprich vom Mitglied (nicht Vorname). Keine Aufgaben fürs Mitglied außerhalb des Studios. Sicherheit first. Keine Erfindungen.\n";
+  base += "DATENSCHUTZ: Wenn die Anamnese Klarnamen, Geburtsdaten, Adressen, Telefonnummern oder E-Mail-Adressen enthält, ignoriere diese. Sprich vom Mitglied. Gib KEINE personenbezogenen Daten in der Antwort wieder.\n";
+  base += "EVIDENZ-PFLICHT: Jeder Trainingsimpuls MUSS auf einer konkreten Studie oder Leitlinie basieren. Gib die Quelle in Klammern an (Autor, Jahr ODER Leitlinie z.B. ACSM, NSCA). Wenn du für einen Impuls KEINE Studie benennen kannst, formuliere ihn so: Keine direkte Studienlage verfügbar. Basierend auf vergleichbaren Befunden zu [ähnliches Krankheitsbild/Faktor] wird empfohlen: [Empfehlung] (Quelle der analogen Evidenz). Erfinde NIEMALS eine Studie oder einen Autor. Im Zweifel lieber weniger Impulse mit solider Evidenz als viele ohne Grundlage.\n";
+  base += "STUDIO-DATEN FITNESS PARK (alle Standorte):\n";
+  base += "- Intensivbetreuung + Sensopro: 2 Euro/Woche (Koordination, Rumpfstabilität, Challenger-Tracking, Trainertermine alle 3 Monate)\n";
+  base += "- Betreuungsstufen: Basic (2x/Jahr) - Intensive (2 Euro/Wo) - Personal (ab 89,90 Euro/h)\n";
+  base += "- Personal Training Mitglieder: 89,90 Euro/h | 10er: 899 Euro | 20er: 1.618,20 Euro\n";
+  base += "- Abnehmen: myshape Programm\n";
+  if (studio && geraete) {
+    base += "AUSSTATTUNG STANDORT " + studio.toUpperCase() + " (NUR diese Geräte/Angebote stehen am Standort zur Verfügung — empfehle ausschließlich aus dieser Liste FÜR TRAININGSIMPULSE):\n";
+    if (geraete.fitness && geraete.fitness.length) base += "- Fitness/Training: " + geraete.fitness.join(", ") + "\n";
+    if (geraete.wellness && geraete.wellness.length) base += "- Wellness: " + geraete.wellness.join(", ") + "\n";
+    if (geraete.diagnostik && geraete.diagnostik.length) base += "- Diagnostik: " + geraete.diagnostik.join(", ") + "\n";
+    if (geraete.exklusiv && geraete.exklusiv.length) base += "- Exklusiv an diesem Standort: " + geraete.exklusiv.join(", ") + "\n";
+    base += "WICHTIG: Diese Geräte/Angebote sind im Mitgliedsbeitrag enthalten und KEINE Verkaufsanker. Sie dienen ausschließlich der Trainingsplanung. Schlage als Verkaufsanker NUR Produkte aus der unten folgenden Verkaufsprodukte-Liste vor.\n";
+  }
+  // Verkaufsprodukte: NUR die mit preis > 0 (kostenpflichtig) — kostenlose Angebote sind keine Verkaufsanker
+  const kostenpflichtig = (studioProdukte || []).filter(function(p) { return p.preis && Number(p.preis) > 0; });
+  if (kostenpflichtig.length) {
+    base += "VERKAUFSPRODUKTE-WHITELIST STANDORT " + studio.toUpperCase() + " — DIES IST DIE EINZIGE ZULÄSSIGE LISTE FÜR VERKAUFSANKER:\n";
+    kostenpflichtig.forEach(function(p) {
+      var einheit = p.einheit && p.einheit.includes("Monat") ? "€/Monat" : p.einheit && p.einheit.includes("Woche") ? "€/Woche" : "€";
+      base += "- " + p.name + " (" + p.kategorie + "): " + p.preis + einheit + "\n";
+    });
+    base += "VERKAUFSANKER-REGEL (ABSOLUT): Im Abschnitt VERKAUFSANKER darfst du AUSSCHLIESSLICH Produkte aus dieser Whitelist nennen. Verboten sind: Geräte aus der Ausstattungsliste (InBody, Cardioscan, Sauna, Medyjet, EGYM, Sensopro etc.), allgemein bekannte Studio-Angebote, generische Empfehlungen wie Probetraining oder Beratungstermin. Wenn ein Produkt nicht in der Whitelist steht, NENNE ES NICHT als Verkaufsanker. Lieber weniger Verkaufsanker als einer außerhalb der Whitelist. Wenn die Whitelist leer wäre, lasse den Verkaufsanker-Abschnitt leer mit Hinweis: Keine kostenpflichtigen Verkaufsprodukte für diesen Standort hinterlegt.\n";
+  } else {
+    base += "VERKAUFSPRODUKTE: Keine kostenpflichtigen Verkaufsprodukte für diesen Standort hinterlegt. Lasse den Verkaufsanker-Abschnitt leer mit dem Hinweis: Keine kostenpflichtigen Verkaufsprodukte für diesen Standort hinterlegt.\n";
+  }
+  base += "ERNÄHRUNG-REGEL: Anamnesespezifische Hinweise NUR mit konkreter Quelle (Autor + Jahr, Leitlinie, Konsensuspapier). KEINE Standardempfehlungen wie Eiweißmenge, Trinkmenge, Whey-Protein, Kollagen, Mahlzeitenfrequenz. KEINE allgemeinen Tipps. NUR was direkt aus genannten Beschwerden, Diagnosen, Medikamenten oder Zielen ableitbar ist UND mit benennbarer Studie/Leitlinie belegt werden kann. Wenn keine direkte Studienlage: formuliere transparent: Keine direkte Studienlage verfügbar. Basierend auf vergleichbaren Befunden zu [Bezug] wird empfohlen: [Empfehlung] (Quelle der analogen Evidenz). NIEMALS Studien, Autoren oder Quellen erfinden. Im Zweifel KEINE Empfehlung. Wenn keine evidenzbasierte Empfehlung möglich, schreibe exakt: Keine spezifischen evidenzbasierten Hinweise aus der Anamnese ableitbar. Ernährungsberatung empfehlen.\n";
+  if (studioTipps && studioTipps.trim()) {
+    base += "STUDIO-SPEZIFISCHE TRAININGSTIPPS (von der Studioleitung hinterlegt):\n" + studioTipps + "\n";
+  }
+  base += "EXAKTE AUSGABESTRUKTUR:\n";
+  if (isDetail) {
+    base += "### PERSON AUF EINEN BLICK\n- 5-7 Stichpunkte, je max 12 Wörter\n";
+    base += "### TRAININGSIMPULSE\n- 4-6 Impulse, Format: **Impuls** -- Begründung mit 1-2 Sätzen (Quelle)\n- JEDER Impuls mit Studienreferenz oder Leitlinie. Auch Periodisierung, Frequenz, Volumen wo sinnvoll.\n";
+    base += "### ACHTUNG\n- NICHT: [Was] -- WEIL: [Begründung aus Anamnese]. Bei Bedarf 2-4 Punkte.\n";
+    base += "### VERKAUFSANKER\n- 2-4 Verkaufsanker. Pro Anker: Produkt + Preis + 1 Satz Formulierungsvorschlag in Anführungszeichen. NUR aus der Verkaufsprodukte-Liste.\n";
+    base += "### ERNÄHRUNGSIMPULSE\n- 1-3 anamnesespezifische Hinweise. Format: **Hinweis** -- Begründung (Quelle: Autor Jahr / Leitlinie). Ohne Quelle KEIN Hinweis. Bei fehlender Evidenz exakt: Keine spezifischen evidenzbasierten Hinweise aus der Anamnese ableitbar. Ernährungsberatung empfehlen.\n";
+    base += "### OFFENE PUNKTE\n- Fehlende relevante Infos für die Trainingsplanung.";
+  } else {
+    base += "### PERSON AUF EINEN BLICK\n- 4-5 Stichpunkte, je max 8 Wörter\n";
+    base += "### TRAININGSIMPULSE\n- GENAU 3 Impulse, Format: **Impuls** -- Begründung in EINEM kurzen Satz (Quelle)\n- Begründung max 20 Wörter pro Impuls.\n";
+    base += "### ACHTUNG\n- 1-2 Punkte. Format: NICHT: [Was] -- WEIL: [Begründung aus Anamnese]\n";
+    base += "### VERKAUFSANKER\n- 2-3 Verkaufsanker. Pro Anker: Produkt + Preis + EIN kurzer Satz Formulierungsvorschlag in Anführungszeichen. Max 20 Wörter Formulierung. NUR aus der Verkaufsprodukte-Liste.\n";
+    base += "### ERNÄHRUNGSIMPULSE\n- Max 2 anamnesespezifische Hinweise. Format: **Hinweis** -- kurze Begründung (Quelle: Autor Jahr / Leitlinie). Ohne benennbare Quelle KEIN Hinweis. Bei fehlender Evidenz exakt: Keine spezifischen evidenzbasierten Hinweise aus der Anamnese ableitbar. Ernährungsberatung empfehlen.\n";
+    base += "### OFFENE PUNKTE\n- Max 3 Stichpunkte, je max 8 Wörter.";
+  }
+  return base;
+}
+
+// Helper: liefert Produkte, die für ein bestimmtes Studio verfügbar UND aktiv sind
+function getStudioProdukte(produkte, verfuegbarkeit, studio, opts) {
+  if (!studio) return [];
+  const idsForStudio = new Set(verfuegbarkeit.filter(function(v) { return v.studio === studio; }).map(function(v) { return v.produkt_id; }));
+  const excludeAktivitaeten = opts && opts.excludeAktivitaeten;
+  return produkte.filter(function(p) {
+    if (!p.aktiv || !idsForStudio.has(p.id)) return false;
+    if (excludeAktivitaeten && p.ist_aktivitaet) return false;
+    return true;
+  });
+}
+
+// Helper: liefert Studios, in denen ein Produkt verfügbar ist
+function getProduktStudios(verfuegbarkeit, produktId) {
+  return verfuegbarkeit.filter(function(v) { return v.produkt_id === produktId; }).map(function(v) { return v.studio; });
+}
+
+// Cache: Geräte pro Studio werden beim ersten Briefing geladen und im Browser zwischengespeichert
+const geraeteCache = {};
+async function loadStudioGeraete(studio) {
+  if (geraeteCache[studio]) return geraeteCache[studio];
+  const res = await sb.from("studio_geraete").select("kategorie, name, exklusiv").eq("studio", studio).eq("aktiv", true);
+  const out = { fitness: [], wellness: [], diagnostik: [], exklusiv: [] };
+  if (res.data) {
+    res.data.forEach(function(g) {
+      if (out[g.kategorie]) out[g.kategorie].push(g.name);
+      if (g.exklusiv) out.exklusiv.push(g.name);
+    });
+  }
+  geraeteCache[studio] = out;
+  return out;
+}
+
+// Pseudonymisierung: vor jedem API-Call werden Klarnamen, Geburtsdaten, E-Mails und Telefonnummern entfernt.
+// Liefert {clean, removed} zurück, damit der Trainer sieht, was rausgefiltert wurde.
+function pseudonymize(text) {
+  if (!text) return { clean: "", removed: [] };
+  let clean = text;
+  const removed = [];
+  // E-Mail
+  if (/[\w.+-]+@[\w-]+\.[\w.-]+/.test(clean)) { clean = clean.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[E-Mail]"); removed.push("E-Mail"); }
+  // Telefon (deutsche Formate, mind. 7 Ziffern, optional + und Bindestriche/Leerzeichen)
+  if (/(\+?\d[\d\s\-\/]{6,}\d)/.test(clean)) { clean = clean.replace(/(\+?\d[\d\s\-\/]{6,}\d)/g, "[Telefon]"); removed.push("Telefon"); }
+  // Geburtsdatum / Datum DD.MM.YYYY oder DD.MM.YY
+  if (/\b\d{1,2}\.\d{1,2}\.\d{2,4}\b/.test(clean)) { clean = clean.replace(/\b\d{1,2}\.\d{1,2}\.\d{2,4}\b/g, "[Datum]"); removed.push("Datum"); }
+  // Namen mit Anrede: "Frau Müller", "Herr Dr. Schmidt-Meyer"
+  if (/\b(Herr|Frau|Hr\.|Fr\.)\s+(Dr\.\s+|Prof\.\s+)?[A-ZÄÖÜ][a-zäöüß]+(-[A-ZÄÖÜ][a-zäöüß]+)?(\s+[A-ZÄÖÜ][a-zäöüß]+(-[A-ZÄÖÜ][a-zäöüß]+)?)?/.test(clean)) {
+    clean = clean.replace(/\b(Herr|Frau|Hr\.|Fr\.)\s+(Dr\.\s+|Prof\.\s+)?[A-ZÄÖÜ][a-zäöüß]+(-[A-ZÄÖÜ][a-zäöüß]+)?(\s+[A-ZÄÖÜ][a-zäöüß]+(-[A-ZÄÖÜ][a-zäöüß]+)?)?/g, "[Mitglied]");
+    removed.push("Name");
+  }
+  // Felder mit Doppelpunkt: "Name: Max Mustermann", "Mitglied: ..."
+  if (/^\s*(Name|Mitglied|Vorname|Nachname|Adresse|Anschrift|Straße|PLZ|Ort|Wohnort|Telefon|Tel|Mobil|Handy|E-?Mail|Mail|Geburtsdatum|Geb)\s*:\s*.+$/im.test(clean)) {
+    clean = clean.replace(/^\s*(Name|Mitglied|Vorname|Nachname|Adresse|Anschrift|Straße|PLZ|Ort|Wohnort|Telefon|Tel|Mobil|Handy|E-?Mail|Mail|Geburtsdatum|Geb)\s*:\s*.+$/gim, "$1: [entfernt]");
+    if (!removed.includes("Personenfeld")) removed.push("Personenfeld");
+  }
+  return { clean: clean, removed: Array.from(new Set(removed)) };
+}
+
+async function callAPI(anamnese, letzter, studioTipps, studio, studioProdukte, mode) {
+  // mode: "kompakt" (default) | "detail"
+  const m = mode === "detail" ? "detail" : "kompakt";
+  // Pseudonymisierung VOR dem API-Call
+  const a = pseudonymize(anamnese);
+  const l = pseudonymize(letzter || "");
+  const removedAll = Array.from(new Set([].concat(a.removed, l.removed)));
+  let msg = "ANAMNESE:\n" + a.clean;
+  if (l.clean && l.clean.trim()) msg += "\n\nLETZTER TERMIN:\n" + l.clean;
+  try {
+    const geraete = studio ? await loadStudioGeraete(studio) : null;
+    const r = await fetch("/api/generate", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: m === "detail" ? 2500 : 1500, system: buildSYS(studioTipps, studio, geraete, studioProdukte, m), messages: [{ role: "user", content: msg }] }),
+    });
+    if (!r.ok) { const e = await r.json().catch(function() { return {}; }); const m2 = typeof e.error === "string" ? e.error : (e.error?.message || JSON.stringify(e)); throw new Error(m2); }
+    const d = await r.json();
+    let text = d.content.filter(function(b) { return b.type === "text"; }).map(function(b) { return b.text; }).join("\n");
+    // Post-Filter: Verkaufsanker gegen Whitelist matchen
+    const filtered = filterVerkaufsanker(text, studioProdukte || []);
+    return { ok: true, text: filtered.text, removed: removedAll, removedAnker: filtered.removedAnker };
+  } catch (e) { return { ok: false, text: e.message, removed: removedAll, removedAnker: [] }; }
+}
+
+// Post-Filter: prüft den VERKAUFSANKER-Abschnitt und entfernt Bullet-Points,
+// die kein zugelassenes Produkt aus der Whitelist enthalten.
+function filterVerkaufsanker(text, studioProdukte) {
+  if (!text || !text.includes("VERKAUFSANKER")) return { text: text, removedAnker: [] };
+  const whitelist = studioProdukte.filter(function(p) { return p.preis && Number(p.preis) > 0; }).map(function(p) { return p.name.toLowerCase(); });
+  if (whitelist.length === 0) return { text: text, removedAnker: [] };
+  // Zerlegen in Abschnitte: alles zwischen "VERKAUFSANKER" und nächster Headline (### oder ENDE)
+  const lines = text.split("\n");
+  const out = [];
+  const removedAnker = [];
+  let inAnker = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const isHeadline = /^#{1,4}\s/.test(line) || /^[A-ZÄÖÜ\s]{4,}$/.test(line.trim());
+    if (line.includes("VERKAUFSANKER")) { inAnker = true; out.push(line); continue; }
+    if (inAnker && isHeadline && !line.includes("VERKAUFSANKER")) { inAnker = false; out.push(line); continue; }
+    if (inAnker) {
+      // Bullet-Point: prüfen ob ein Whitelist-Eintrag drinsteht
+      const isBullet = /^[\s]*[▸\-\*•]/.test(line) || /^\s*\d+\./.test(line);
+      if (isBullet && line.trim().length > 3) {
+        const lower = line.toLowerCase();
+        const match = whitelist.some(function(name) { return lower.includes(name); });
+        if (!match) {
+          // Ankerzeile entfernen, kurzen Auszug merken
+          const excerpt = line.replace(/^[\s▸\-\*•\d\.]+/, "").split(/[:\(\—\-]/)[0].trim().slice(0, 60);
+          if (excerpt) removedAnker.push(excerpt);
+          continue;
+        }
+      }
+    }
+    out.push(line);
+  }
+  let cleanedText = out.join("\n");
+  // Falls am Ende KEIN gültiger Anker mehr im Verkaufsanker-Block steht, Hinweis ergänzen
+  if (removedAnker.length > 0) {
+    cleanedText = cleanedText.replace(
+      /(VERKAUFSANKER[^\n]*\n)((?:(?![\#\n]{1,4}\s|^[A-ZÄÖÜ\s]{4,}$)[^\n]*\n?)*)/,
+      function(match, header, body) {
+        if (!/[▸\-\*•]/.test(body)) {
+          return header + "▸Keine zugelassenen Verkaufsanker für diese Anamnese gefunden.\n";
+        }
+        return match;
+      }
+    );
+  }
+  return { text: cleanedText, removedAnker: removedAnker };
+}
+
+async function parseScreenshot(base64) {
+  try {
+    const r = await fetch("/api/generate", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6", max_tokens: 1000,
+        system: "Du analysierst Screenshots aus Kassensystemen (z.B. Magicline). Extrahiere alle Produkte mit Namen und Preisen. Antworte NUR mit einem JSON-Array, kein anderer Text. Format: [{\"name\":\"Produktname\",\"preis\":12.90}]. Wenn du nichts erkennst, antworte mit [].",
+        messages: [{ role: "user", content: [
+          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: base64 } },
+          { type: "text", text: "Extrahiere alle Produkte und Preise aus diesem Screenshot." }
+        ]}]
+      }),
+    });
+    if (!r.ok) throw new Error("API Fehler");
+    const d = await r.json();
+    const txt = d.content.filter(function(b) { return b.type === "text"; }).map(function(b) { return b.text; }).join("");
+    const clean = txt.replace(/`{3}json|`{3}/g, "").trim();
+    return JSON.parse(clean);
+  } catch (e) { return []; }
+}
+
+function Briefing({ text }) {
+  if (!text) return null;
+  const parts = text.split(/(?=^### )/gm).filter(function(p) { return p.trim().startsWith("### "); });
+  const colors = { "ACHTUNG": ["bg-red-50", "border-red-300", "text-red-700"], "OFFENE PUNKTE": ["bg-amber-50", "border-amber-300", "text-amber-700"] };
+  return React.createElement("div", { className: "space-y-3" }, parts.map(function(p, i) {
+    var nl = p.indexOf("\n"); if (nl === -1) return null;
+    var title = p.slice(4, nl).trim(), body = p.slice(nl + 1).trim();
+    var c = colors[title] || ["bg-white", "border-gray-200", "text-emerald-700"];
+    return React.createElement("div", { key: i, className: "p-4 rounded-lg border " + c[0] + " " + c[1] },
+      React.createElement("div", { className: "font-bold text-xs uppercase tracking-wider mb-2 " + c[2] }, title),
+      React.createElement("div", { className: "text-sm text-gray-800 leading-relaxed" },
+        body.split("\n").map(function(line, j) {
+          if (!line.trim()) return null;
+          if (line.startsWith("- ")) {
+            var ct = line.slice(2), sg = ct.split(/\*\*(.*?)\*\*/g);
+            return React.createElement("div", { key: j, className: "flex gap-2 mb-1.5" },
+              React.createElement("span", { className: "text-emerald-500 mt-0.5 flex-shrink-0" }, "▸"),
+              React.createElement("span", null, sg.map(function(s, k) {
+                return k % 2 === 1 ? React.createElement("strong", { key: k }, s) : React.createElement("span", { key: k }, s);
+              }))
+            );
+          }
+          return React.createElement("p", { key: j, className: "mb-1" }, line);
+        })
+      )
+    );
+  }));
+}
+
+function ProfilModal({ trainer, onClose }) {
+  const [oldPw, setOldPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
+  const [email, setEmail] = useState("");
+
+  // E-Mail aus Auth-Session laden (steht nicht im trainer-Objekt, da nur public-Daten dort)
+  useEffect(function() {
+    sb.auth.getUser().then(function(res) {
+      if (res.data && res.data.user) setEmail(res.data.user.email || "");
+    });
+  }, []);
+
+  const change = async function() {
+    setErr(""); setOk("");
+    if (!oldPw || !newPw || !confirmPw) { setErr("Alle Felder ausfüllen"); return; }
+    if (newPw.length < 8) { setErr("Neues Passwort muss mindestens 8 Zeichen haben"); return; }
+    if (newPw !== confirmPw) { setErr("Passwort und Bestätigung stimmen nicht überein"); return; }
+    if (oldPw === newPw) { setErr("Neues Passwort muss sich vom alten unterscheiden"); return; }
+
+    setLoading(true);
+    // 1. Reauth: altes Passwort verifizieren über erneuten Login
+    const reauth = await sb.auth.signInWithPassword({ email: email, password: oldPw });
+    if (reauth.error) {
+      setLoading(false);
+      setErr("Aktuelles Passwort ist falsch");
+      setOldPw("");
+      return;
+    }
+    // 2. Passwort ändern
+    const { error } = await sb.auth.updateUser({ password: newPw });
+    setLoading(false);
+    if (error) {
+      setErr("Fehler beim Ändern: " + error.message);
+      return;
+    }
+    setOk("Passwort wurde geändert. Du bleibst eingeloggt.");
+    setOldPw(""); setNewPw(""); setConfirmPw("");
+    setTimeout(function() { onClose(); }, 2500);
+  };
+
+  return (<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={onClose}>
+    <div className="bg-white rounded-xl max-w-md w-full p-6 space-y-4" onClick={function(e) { e.stopPropagation(); }}>
+      <div className="flex items-center justify-between">
+        <div className="text-lg font-bold text-gray-800">Mein Profil</div>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&#10005;</button>
+      </div>
+
+      <div className="space-y-2 pb-4 border-b border-gray-200">
+        <div className="flex justify-between text-sm"><span className="text-gray-500">Name</span><span className="text-gray-800 font-medium">{trainer.name}</span></div>
+        <div className="flex justify-between text-sm"><span className="text-gray-500">E-Mail</span><span className="text-gray-800 font-medium text-xs">{email}</span></div>
+        <div className="flex justify-between text-sm"><span className="text-gray-500">Heimatstudio</span><span className="text-gray-800 font-medium">{trainer.studio}</span></div>
+        <div className="flex justify-between text-sm"><span className="text-gray-500">Rolle</span><span className="text-gray-800 font-medium">{trainer.rolle === "admin" ? "Admin" : trainer.rolle === "leitung" ? "Leitung" : "Trainer"}</span></div>
+      </div>
+
+      <div className="space-y-3">
+        <div className="text-sm font-bold text-gray-700">Passwort ändern</div>
+        <div>
+          <label className="text-xs text-gray-500">Aktuelles Passwort</label>
+          <input type="password" autoComplete="current-password" value={oldPw} onChange={function(e) { setOldPw(e.target.value); setErr(""); }} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none" />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500">Neues Passwort (mindestens 8 Zeichen)</label>
+          <input type="password" autoComplete="new-password" value={newPw} onChange={function(e) { setNewPw(e.target.value); setErr(""); }} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none" />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500">Neues Passwort bestätigen</label>
+          <input type="password" autoComplete="new-password" value={confirmPw} onChange={function(e) { setConfirmPw(e.target.value); setErr(""); }} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none" onKeyDown={function(e) { if(e.key==="Enter") change(); }} />
+        </div>
+        {err && <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">{err}</div>}
+        {ok && <div className="p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-700">{ok}</div>}
+        <div className="flex gap-2">
+          <button onClick={change} disabled={loading} className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-400 text-white text-sm font-bold rounded-lg">{loading ? "Ändere..." : "Passwort ändern"}</button>
+          <button onClick={onClose} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 text-sm font-bold rounded-lg">Abbrechen</button>
+        </div>
+      </div>
+    </div>
+  </div>);
+}
+
+function Login() {
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const login = async function() {
+    if (!email || !pw) return;
+    setLoading(true); setErr("");
+    const { error } = await sb.auth.signInWithPassword({ email: email.trim().toLowerCase(), password: pw });
+    setLoading(false);
+    if (error) { setErr("E-Mail oder Passwort falsch."); setPw(""); }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4"><div className="w-full max-w-sm">
+      <div className="text-center mb-8">
+        <div className="text-3xl font-black text-white tracking-tight">TRAINER<span className="text-emerald-400">HUB</span></div>
+        <div className="text-xs text-gray-500 mt-1 tracking-widest uppercase">Anmelden</div>
+      </div>
+      <div className="bg-gray-800 rounded-xl p-6 space-y-4">
+        <div>
+          <label className="text-xs text-gray-400 uppercase tracking-wider">E-Mail</label>
+          <input type="email" autoComplete="username" value={email} onChange={function(e) { setEmail(e.target.value); setErr(""); }} placeholder="vorname.studio@fitnesspark.de" className="w-full mt-1 px-3 py-2.5 bg-gray-700 text-white rounded-lg border border-gray-600 focus:border-emerald-500 focus:outline-none text-sm" />
+        </div>
+        <div>
+          <label className="text-xs text-gray-400 uppercase tracking-wider">Passwort</label>
+          <input type="password" autoComplete="current-password" value={pw} onChange={function(e) { setPw(e.target.value); setErr(""); }} className="w-full mt-1 px-3 py-2.5 bg-gray-700 text-white rounded-lg border border-gray-600 focus:border-emerald-500 focus:outline-none text-sm" onKeyDown={function(e) { if(e.key==="Enter") login(); }} />
+        </div>
+        {err && <div className="text-xs text-red-400 text-center">{err}</div>}
+        <button onClick={login} disabled={!email || !pw || loading} className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-600 disabled:text-gray-400 text-white font-bold rounded-lg text-sm transition-colors">{loading ? "Anmelden..." : "Anmelden"}</button>
+        <div className="text-center text-xs text-gray-500 mt-2">Passwort vergessen? Bei Hendrik melden.</div>
+      </div>
+    </div></div>
+  );
+}
+
+function Nav({ view, setView, trainer, aktivesStudio, setAktivesStudio, onLogout, onProfilClick }) {
+  const isL = trainer.rolle === "leitung" || trainer.rolle === "admin";
+  const isAdmin = trainer.rolle === "admin";
+  const tabs = [{ id: "briefing", l: "Briefing" }, { id: "erfolge", l: "Erfolge" }, { id: "dashboard", l: "Dashboard" }, { id: "berichte", l: "Bericht" }];
+  if (isL) { tabs.push({ id: "team", l: "Team" }); tabs.push({ id: "produkte", l: "Produkte" }); tabs.push({ id: "kategorien", l: "Kategorien" }); tabs.push({ id: "terminarten", l: "Terminarten" }); tabs.push({ id: "ziele", l: "Ziele" }); tabs.push({ id: "tipps", l: "Studio-Tipps" }); }
+  const rollenLabel = isAdmin ? "Admin" : (isL ? "Leitung" : "Trainer");
+  const rollenColor = isAdmin ? "text-emerald-400" : (isL ? "text-amber-400" : "text-gray-500");
+  const istVertretung = aktivesStudio !== trainer.studio;
+  return (<div className="bg-gray-900 text-white px-4 py-3"><div className="max-w-4xl mx-auto flex items-center justify-between flex-wrap gap-2">
+    <div className="flex items-center gap-4">
+      <div className="font-black text-lg tracking-tight">TRAINER<span className="text-emerald-400">HUB</span></div>
+      <div className="flex gap-1">{tabs.map(function(t) { return <button key={t.id} onClick={function() { setView(t.id); }} className={"px-3 py-1.5 rounded-md text-xs font-medium transition-colors " + (view === t.id ? "bg-emerald-600 text-white" : "text-gray-400 hover:text-white hover:bg-gray-800")}>{t.l}</button>; })}</div>
+    </div>
+    <div className="flex items-center gap-3">
+      <div className="flex items-center gap-1.5">
+        <button onClick={onProfilClick} className="text-xs text-gray-400 hover:text-white transition-colors" title="Profil und Passwort verwalten">{trainer.name} ⚙</button>
+        <span className="text-xs text-gray-500">·</span>
+        <select value={aktivesStudio} onChange={function(e) { setAktivesStudio(e.target.value); }} className={"text-xs px-2 py-1 rounded-md bg-gray-800 border focus:outline-none cursor-pointer " + (istVertretung ? "border-amber-500 text-amber-300" : "border-gray-700 text-gray-300")} title={istVertretung ? "Vertretung im fremden Studio" : "Aktuelles Studio"}>
+          {STUDIOS.map(function(s) { return <option key={s} value={s}>{s}{s === trainer.studio ? " (Heimat)" : ""}</option>; })}
+        </select>
+        <span className={"text-xs ml-1 " + rollenColor}>{rollenLabel}</span>
+      </div>
+      <button onClick={onLogout} className="text-xs text-gray-500 hover:text-white">Logout</button>
+    </div>
+  </div></div>);
+}
+
+function BriefingView({ studioTipps, trainer, produkte, verfuegbarkeit }) {
+  const [ana, setAna] = useState("");
+  const [lt, setLt] = useState("");
+  const [result, setResult] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [err, setErr] = useState(null);
+  const [showLt, setShowLt] = useState(false);
+  const [consent, setConsent] = useState(false);
+  const [removed, setRemoved] = useState([]);
+  const [removedAnker, setRemovedAnker] = useState([]);
+  const go = async function() {
+    if (!ana.trim() || !consent) return;
+    setLoading(true); setErr(null); setResult(null); setDetail(null); setRemoved([]); setRemovedAnker([]);
+    const studioProdukte = getStudioProdukte(produkte, verfuegbarkeit, trainer.studio, { excludeAktivitaeten: true });
+    const r = await callAPI(ana, lt, studioTipps, trainer.studio, studioProdukte, "kompakt");
+    setRemoved(r.removed || []);
+    setRemovedAnker(r.removedAnker || []);
+    r.ok ? setResult(r.text) : setErr(r.text);
+    setLoading(false);
+  };
+  const loadDetail = async function() {
+    setLoadingDetail(true);
+    const studioProdukte = getStudioProdukte(produkte, verfuegbarkeit, trainer.studio, { excludeAktivitaeten: true });
+    const r = await callAPI(ana, lt, studioTipps, trainer.studio, studioProdukte, "detail");
+    if (r.ok) {
+      setDetail(r.text);
+      if (r.removedAnker && r.removedAnker.length) setRemovedAnker(function(prev) { return prev.concat(r.removedAnker); });
+    } else { setErr(r.text); }
+    setLoadingDetail(false);
+  };
+  const reset = function() { setAna(""); setLt(""); setResult(null); setDetail(null); setErr(null); setShowLt(false); setConsent(false); setRemoved([]); setRemovedAnker([]); };
+  if (result) return (<div className="max-w-3xl mx-auto p-4">
+    <div className="flex items-center justify-between mb-4"><div className="text-xs font-bold text-gray-400 uppercase tracking-wider">Trainer-Briefing</div><button onClick={reset} className="text-xs text-emerald-600 hover:text-emerald-700 font-medium">Neues Briefing</button></div>
+    {removed.length > 0 && <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">Vor KI-Versand entfernt: {removed.join(", ")}</div>}
+    {removedAnker.length > 0 && <div className="mb-3 p-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800"><span className="font-bold">Hinweis:</span> Folgende vorgeschlagene Verkaufsanker wurden entfernt, weil sie nicht in der Produkt-Whitelist deines Studios stehen: {Array.from(new Set(removedAnker)).join(", ")}. Falls relevant: Produkt im Tab Produkte freigeben.</div>}
+    <Briefing text={result} />
+    {!detail && (<div className="mt-4">
+      <button onClick={loadDetail} disabled={loadingDetail} className="w-full py-2.5 bg-gray-100 hover:bg-gray-200 disabled:bg-gray-50 text-gray-700 text-xs font-bold rounded-lg transition-colors">{loadingDetail ? "Ausführliches Briefing wird generiert..." : "+ Mehr Details (ausführliches Briefing)"}</button>
+    </div>)}
+    {detail && (<div className="mt-6 pt-6 border-t border-gray-200">
+      <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Ausführliches Briefing</div>
+      <Briefing text={detail} />
+    </div>)}
+  </div>);
+  return (<div className="max-w-3xl mx-auto p-4 space-y-4">
+    <div><div className="flex items-center justify-between mb-2"><label className="text-sm font-bold text-gray-700">Anamnese einfügen</label><span className="text-xs text-gray-400">Copy &amp; Paste · Standort {trainer.studio}</span></div><textarea value={ana} onChange={function(e) { setAna(e.target.value); }} placeholder="Anamnese-Daten hier einfügen..." rows="10" className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none resize-none bg-white" /></div>
+    {!showLt ? <button onClick={function() { setShowLt(true); }} className="text-xs text-emerald-600 hover:text-emerald-700 font-medium">+ Letzten Termin hinzufügen</button> : <div><label className="text-sm font-bold text-gray-700 mb-2 block">Letzter Termin (optional)</label><textarea value={lt} onChange={function(e) { setLt(e.target.value); }} placeholder="Notizen vom letzten Termin..." rows="4" className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none resize-none bg-white" /></div>}
+    <label className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg cursor-pointer">
+      <input type="checkbox" checked={consent} onChange={function(e) { setConsent(e.target.checked); }} className="mt-0.5 flex-shrink-0" />
+      <span className="text-xs text-amber-900 leading-snug">Mitglied wurde über die KI-gestützte Trainingsplanung informiert und hat eingewilligt (Art. 9 Abs. 2 lit. a DSGVO). Klarnamen, Geburtsdaten und Kontaktdaten werden vor dem Versand automatisch entfernt.</span>
+    </label>
+    {err && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{err}</div>}
+    <button onClick={go} disabled={!ana.trim() || !consent || loading} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-300 text-white font-bold rounded-lg text-sm transition-colors">{loading ? "Briefing wird generiert..." : "Briefing generieren"}</button>
+  </div>);
+}
+
+function ErfolgeView({ trainer, aktivesStudio, produkte, verfuegbarkeit, erfolge, setErfolge, kategorien, terminarten }) {
+  const [tart, setTart] = useState("");
+  const [sel, setSel] = useState([]);
+  const [teilnehmer, setTeilnehmer] = useState("");
+  const [seminarCount, setSeminarCount] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const aktive = getStudioProdukte(produkte, verfuegbarkeit, aktivesStudio);
+  const katNames = (kategorien && kategorien.length > 0) ? kategorien.map(function(k) { return k.name; }) : KATEGORIEN_FALLBACK;
+  // Aktivitäten-Items separat halten und unten anzeigen, alle anderen klassisch nach Kategorie gruppieren
+  const aktivitaeten = aktive.filter(function(p) { return p.ist_aktivitaet; });
+  const verkaufsItems = aktive.filter(function(p) { return !p.ist_aktivitaet; });
+  const grouped = katNames.map(function(k) { return { k: k, items: verkaufsItems.filter(function(p) { return p.kategorie === k; }) }; }).filter(function(g) { return g.items.length > 0; });
+  const tartList = (terminarten && terminarten.length > 0) ? terminarten.filter(function(t) { return t.aktiv !== false; }).slice().sort(function(a, b) { return a.label.localeCompare(b.label, "de"); }) : TERMINARTEN_FALLBACK;
+  const tartLabel = function(id) { var t = tartList.find(function(x) { return x.id === id; }); if (t) return t.label; var all = (terminarten || []).find(function(x) { return x.id === id; }); return all ? all.label : id; };
+  const tartObj = tartList.find(function(t) { return t.id === tart; });
+  const isGruppentermin = tartObj && tartObj.is_gruppentermin === true;
+  const SEMINAR_ID = "p_aktivitaet_seminar";
+  const seminarSelected = sel.includes(SEMINAR_ID);
+  const toggle = function(id) {
+    setSel(function(p) { return p.includes(id) ? p.filter(function(x) { return x !== id; }) : p.concat([id]); });
+    if (id === SEMINAR_ID) setSeminarCount(""); // Reset bei jedem Toggle
+  };
+  const istVertretung = aktivesStudio !== trainer.studio;
+
+  const save = async function() {
+    if (!tart) return;
+    if (isGruppentermin) {
+      var n = parseInt(teilnehmer, 10);
+      if (!n || n < 1) { alert("Bitte Teilnehmerzahl eingeben (mindestens 1)."); return; }
+    }
+    var seminarAnzahl = 0;
+    if (seminarSelected) {
+      seminarAnzahl = parseInt(seminarCount, 10);
+      if (isNaN(seminarAnzahl) || seminarAnzahl < 0 || seminarAnzahl > 4) {
+        alert("Seminareintragungen: Zahl zwischen 0 und 4 eintragen.");
+        return;
+      }
+    }
+
+    // Verkaufs-Array bauen: normale Items 1x, Seminar n-mal hineingelegt
+    const vk = [];
+    sel.forEach(function(id) {
+      const p = produkte.find(function(x) { return x.id === id; });
+      const item = { id: id, name: p ? p.name : id, preis: p ? Number(p.preis) : 0 };
+      if (id === SEMINAR_ID) {
+        for (var i = 0; i < seminarAnzahl; i++) vk.push(item);
+      } else {
+        vk.push(item);
+      }
+    });
+
+    const newE = {
+      id: "e" + Date.now(),
+      trainer_id: trainer.id,
+      trainer: trainer.name,
+      studio: aktivesStudio,
+      terminart: tart,
+      verkauft: vk,
+      datum: new Date().toISOString(),
+      teilnehmer_anzahl: isGruppentermin ? parseInt(teilnehmer, 10) : null
+    };
+    const res = await sb.from("erfolge").insert([newE]).select().single();
+    if (res.error) { alert("Fehler beim Speichern: " + res.error.message); return; }
+    const finalE = res.data || newE;
+    setErfolge(function(prev) { return prev.concat([finalE]); });
+    setSaved(true); setTimeout(function() { setTart(""); setSel([]); setTeilnehmer(""); setSeminarCount(""); setSaved(false); }, 1500);
+  };
+
+  // Historie zeigt eigene Erfolge im aktiven Studio
+  const myErfolge = erfolge.filter(function(x) { return x.studio === aktivesStudio && x.trainer_id === trainer.id; });
+  const delErfolg = async function(id) {
+    await sb.from("erfolge").delete().eq("id", id);
+    setErfolge(function(prev) { return prev.filter(function(x) { return x.id !== id; }); });
+  };
+
+  return (<div className="max-w-3xl mx-auto p-4">
+    <div className="flex items-center justify-between mb-4">
+      <div>
+        <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">Erfolge erfassen</div>
+        {istVertretung && <div className="text-xs text-amber-600 font-medium mt-1">Vertretung in {aktivesStudio}</div>}
+      </div>
+      <button onClick={function() { setShowHistory(!showHistory); }} className="text-xs text-emerald-600 hover:text-emerald-700 font-medium">{showHistory ? "← Zurück" : "Historie anzeigen"}</button>
+    </div>
+    {showHistory ? (
+      <div className="space-y-2">
+        {myErfolge.length === 0 && <div className="text-center py-8 text-gray-400 text-sm">Noch keine Erfolge in den letzten 30 Tagen.</div>}
+        {myErfolge.sort(function(a,b) { return new Date(b.datum) - new Date(a.datum); }).map(function(e) { return (
+          <div key={e.id} className="bg-white border border-gray-200 rounded-lg p-3">
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-sm font-medium text-gray-800 flex items-center gap-2">
+                {e.nummer && <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold">{e.nummer}</span>}
+                <span>{e.trainer}</span>
+                <span className="text-gray-400">·</span>
+                <span className="text-gray-500">{tartLabel(e.terminart)}</span>
+                {e.teilnehmer_anzahl != null && <span className="text-xs text-emerald-600 font-medium">· {e.teilnehmer_anzahl} TN</span>}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-400">{new Date(e.datum).toLocaleDateString("de-DE")}</span>
+                <button onClick={function() { delErfolg(e.id); }} className="text-xs text-red-400 hover:text-red-600">&#10005;</button>
+              </div>
+            </div>
+            {e.verkauft && e.verkauft.length > 0 && <div className="text-xs text-gray-500">{e.verkauft.map(function(v) { return v.name || v; }).join(", ")}</div>}
+          </div>
+        ); })}
+        {myErfolge.length > 0 && <div className="text-center text-xs text-gray-400 pt-2">Standardmäßig werden nur die letzten 30 Tage geladen. Ältere Erfolge im Dashboard über "Alle Erfolge laden".</div>}
+      </div>
+    ) : (
+      <div>
+        {saved && <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-700 font-medium">&#10003; Gespeichert</div>}
+        <div className="space-y-4">
+          <div>
+            <label className="text-xs text-gray-500 uppercase tracking-wider">Terminart</label>
+            <select value={tart} onChange={function(e) { setTart(e.target.value); setTeilnehmer(""); }} className="w-full mt-1 px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none bg-white"><option value="">Bitte wählen</option>{tartList.map(function(t) { return <option key={t.id} value={t.id}>{t.label}{t.is_gruppentermin ? " (Gruppe)" : ""}</option>; })}</select>
+          </div>
+          {isGruppentermin && (
+            <div>
+              <label className="text-xs text-gray-500 uppercase tracking-wider">Teilnehmerzahl</label>
+              <input type="number" min="1" value={teilnehmer} onChange={function(e) { setTeilnehmer(e.target.value); }} placeholder="z.B. 12" className="w-full mt-1 px-3 py-2.5 border border-emerald-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none bg-emerald-50" autoFocus />
+              <p className="text-xs text-gray-500 mt-1">Bei Gruppenterminen werden keine Mitgliedsnamen erfasst — nur die Anzahl der Teilnehmer.</p>
+            </div>
+          )}
+          <div><label className="text-xs text-gray-500 uppercase tracking-wider mb-3 block">{isGruppentermin ? "Verkauft / Gebucht (optional)" : "Verkauft / Gebucht"}</label>
+            {grouped.map(function(g) { return (<div key={g.k} className="mb-3"><div className="text-xs font-bold text-gray-400 mb-1.5">{g.k}</div><div className="grid grid-cols-2 gap-2">{g.items.map(function(p) { return (
+              <button key={p.id} onClick={function() { toggle(p.id); }} className={"text-left px-3 py-2 rounded-lg text-xs font-medium transition-all border " + (sel.includes(p.id) ? "bg-emerald-50 border-emerald-300 text-emerald-800" : "bg-white border-gray-200 text-gray-600 hover:border-gray-300")}>
+                <span className="mr-2">{sel.includes(p.id) ? "✓" : "○"}</span>{p.name}
+              </button>); })}</div></div>); })}
+          </div>
+          {aktivitaeten.length > 0 && (
+            <div className="border-t border-gray-200 pt-4">
+              <label className="text-xs text-gray-500 uppercase tracking-wider mb-3 block">Aktivitäten <span className="text-gray-400 normal-case font-normal">(kein Verkauf, nur Markierung)</span></label>
+              <div className="grid grid-cols-2 gap-2">
+                {aktivitaeten.map(function(p) { return (
+                  <button key={p.id} onClick={function() { toggle(p.id); }} className={"text-left px-3 py-2 rounded-lg text-xs font-medium transition-all border " + (sel.includes(p.id) ? "bg-blue-50 border-blue-300 text-blue-800" : "bg-white border-gray-200 text-gray-600 hover:border-gray-300")}>
+                    <span className="mr-2">{sel.includes(p.id) ? "✓" : "○"}</span>{p.name}
+                  </button>
+                ); })}
+              </div>
+              {seminarSelected && (
+                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <label className="text-xs text-blue-800 font-medium">Anzahl Seminareintragungen</label>
+                  <p className="text-xs text-blue-700 mt-1 mb-2">Für wie viele Seminare wurde die Person bei diesem Termin angemeldet?</p>
+                  <div className="grid grid-cols-5 gap-2">
+                    {[0, 1, 2, 3, 4].map(function(n) { return (
+                      <button key={n} onClick={function() { setSeminarCount(String(n)); }} className={"py-2 rounded-lg text-sm font-bold transition-colors border " + (seminarCount === String(n) ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-blue-300 text-blue-700 hover:bg-blue-100")}>
+                        {n}
+                      </button>
+                    ); })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <button onClick={save} disabled={!tart} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-300 text-white font-bold rounded-lg text-sm transition-colors">Erfolg speichern</button>
+        </div>
+      </div>
+    )}
+  </div>);
+}
+
+function TeamView({ trainer, users, setUsers }) {
+  const [edit, setEdit] = useState(null);
+  const [form, setForm] = useState({ name: "", studio: STUDIOS[3], rolle: "trainer", aktiv: true });
+  const [createForm, setCreateForm] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [createErr, setCreateErr] = useState("");
+  const [createOk, setCreateOk] = useState("");
+  const [pwModal, setPwModal] = useState(null);
+  const [pw1, setPw1] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [pwLoading, setPwLoading] = useState(false);
+  const [pwErr, setPwErr] = useState("");
+  const [pwOk, setPwOk] = useState("");
+  const isAdmin = trainer.rolle === "admin";
+
+  const canResetUser = function(u) {
+    if (!trainer || !u) return false;
+    if (u.id === trainer.id) return false;
+    if (trainer.rolle === "admin") return true;
+    if (trainer.rolle === "leitung") {
+      if (u.studio !== trainer.studio) return false;
+      if (u.rolle === "admin") return false;
+      return true;
+    }
+    return false;
+  };
+
+  const startReset = function(u) {
+    setPwModal(u);
+    setPw1(""); setPw2(""); setPwErr(""); setPwOk("");
+  };
+
+  const submitReset = async function() {
+    setPwErr(""); setPwOk("");
+    if (pw1.length < 8) { setPwErr("Passwort mindestens 8 Zeichen"); return; }
+    if (pw1 !== pw2) { setPwErr("Passwörter stimmen nicht überein"); return; }
+    setPwLoading(true);
+    const { data, error } = await sb.functions.invoke("admin-reset-password", {
+      body: { target_user_id: pwModal.id, new_password: pw1 },
+    });
+    setPwLoading(false);
+    if (error || (data && data.error)) {
+      setPwErr((data && data.error) || error.message || "Reset fehlgeschlagen");
+      return;
+    }
+    setPwOk("Passwort für " + pwModal.name + " wurde gesetzt. Mündlich weitergeben — niemals per E-Mail oder Chat.");
+    setPw1(""); setPw2("");
+  };
+
+  const startCreate = function() {
+    setCreateForm({
+      email: "",
+      password: "",
+      name: "",
+      studio: trainer.studio,
+      rolle: "trainer",
+    });
+    setCreateErr(""); setCreateOk("");
+  };
+
+  const submitCreate = async function() {
+    if (!createForm.email || !createForm.password || !createForm.name) {
+      setCreateErr("Alle Felder ausfüllen"); return;
+    }
+    if (createForm.password.length < 8) {
+      setCreateErr("Passwort mindestens 8 Zeichen"); return;
+    }
+    setCreating(true); setCreateErr(""); setCreateOk("");
+    const { data, error } = await sb.functions.invoke("create-trainer", {
+      body: {
+        email: createForm.email.trim().toLowerCase(),
+        password: createForm.password,
+        name: createForm.name.trim(),
+        studio: createForm.studio,
+        rolle: createForm.rolle,
+      },
+    });
+    setCreating(false);
+    if (error || (data && data.error)) {
+      setCreateErr((data && data.error) || error.message || "Fehler beim Anlegen");
+      return;
+    }
+    if (data && data.success) {
+      // Neuen User in lokale Liste aufnehmen
+      const newUser = { id: data.user.id, name: data.user.name, studio: data.user.studio, rolle: data.user.rolle, aktiv: true };
+      setUsers(function(prev) { return prev.concat([newUser]); });
+      setCreateOk("Trainer angelegt: " + createForm.email);
+      setCreateForm(null);
+      setTimeout(function() { setCreateOk(""); }, 4000);
+    }
+  };
+
+  const startEdit = function(u) {
+    setForm({ name: u.name, studio: u.studio, rolle: u.rolle, aktiv: u.aktiv !== false, id: u.id });
+    setEdit(u.id);
+  };
+  const save = async function() {
+    if (!form.name.trim()) return;
+    const update = { name: form.name.trim(), studio: form.studio, rolle: form.rolle, aktiv: form.aktiv };
+    const res = await sb.from("users").update(update).eq("id", edit);
+    if (res.error) { alert("Fehler: " + res.error.message); return; }
+    setUsers(function(prev) { return prev.map(function(u) { return u.id === edit ? Object.assign({}, u, update) : u; }); });
+    setEdit(null);
+  };
+
+  const visible = isAdmin ? users : users.filter(function(u) { return u.studio === trainer.studio; });
+  const grouped = STUDIOS.map(function(s) { return { s: s, items: visible.filter(function(u) { return u.studio === s; }) }; }).filter(function(g) { return g.items.length > 0; });
+
+  return (<div className="max-w-3xl mx-auto p-4">
+    <div className="flex items-center justify-between mb-4">
+      <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">Team {isAdmin ? "(alle Studios)" : "· " + trainer.studio}</div>
+      <button onClick={startCreate} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg">+ Trainer anlegen</button>
+    </div>
+
+    {createOk && <div className="mb-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-700">{createOk}</div>}
+
+    {createForm && (<div className="mb-4 p-4 bg-white border border-emerald-300 rounded-lg space-y-3">
+      <div className="text-xs font-bold text-emerald-700 uppercase">Neuen Trainer anlegen</div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs text-gray-500">Name</label>
+          <input value={createForm.name} onChange={function(e) { setCreateForm(Object.assign({}, createForm, { name: e.target.value })); }} placeholder="Vorname" className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none" />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500">E-Mail</label>
+          <input type="email" value={createForm.email} onChange={function(e) { setCreateForm(Object.assign({}, createForm, { email: e.target.value })); }} placeholder="vorname.studio@fitnesspark.de" className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none" />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500">Studio</label>
+          <select value={createForm.studio} onChange={function(e) { setCreateForm(Object.assign({}, createForm, { studio: e.target.value })); }} disabled={!isAdmin} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none bg-white disabled:bg-gray-100">{STUDIOS.map(function(s) { return <option key={s}>{s}</option>; })}</select>
+          {!isAdmin && <div className="text-xs text-gray-400 mt-0.5">Leitung kann nur fürs eigene Studio anlegen</div>}
+        </div>
+        <div>
+          <label className="text-xs text-gray-500">Rolle</label>
+          <select value={createForm.rolle} onChange={function(e) { setCreateForm(Object.assign({}, createForm, { rolle: e.target.value })); }} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none bg-white">
+            <option value="trainer">Trainer</option>
+            <option value="leitung">Leitung</option>
+            {isAdmin && <option value="admin">Admin</option>}
+          </select>
+        </div>
+        <div className="col-span-2">
+          <label className="text-xs text-gray-500">Initialpasswort (mindestens 8 Zeichen)</label>
+          <input type="text" value={createForm.password} onChange={function(e) { setCreateForm(Object.assign({}, createForm, { password: e.target.value })); }} placeholder="z.B. Trainer-Brinkum-2026" className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none font-mono" />
+          <div className="text-xs text-gray-400 mt-0.5">Klartext sichtbar — gib es dem Trainer und sage ihm, es nach dem ersten Login zu ändern.</div>
+        </div>
+      </div>
+      {createErr && <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">{createErr}</div>}
+      <div className="flex gap-2">
+        <button onClick={submitCreate} disabled={creating} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-400 text-white text-xs font-bold rounded-lg">{creating ? "Wird angelegt..." : "Trainer anlegen"}</button>
+        <button onClick={function() { setCreateForm(null); setCreateErr(""); }} className="px-4 py-2 bg-gray-200 text-gray-700 text-xs font-bold rounded-lg">Abbrechen</button>
+      </div>
+    </div>)}
+
+    {edit && (<div className="mb-4 p-4 bg-white border border-emerald-300 rounded-lg space-y-3">
+      <div className="text-xs font-bold text-emerald-700 uppercase">Profil bearbeiten</div>
+      <div className="grid grid-cols-2 gap-3">
+        <div><label className="text-xs text-gray-500">Name</label><input value={form.name} onChange={function(e) { setForm(Object.assign({}, form, { name: e.target.value })); }} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none" /></div>
+        <div><label className="text-xs text-gray-500">Studio</label><select value={form.studio} onChange={function(e) { setForm(Object.assign({}, form, { studio: e.target.value })); }} disabled={!isAdmin} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none bg-white disabled:bg-gray-100">{STUDIOS.map(function(s) { return <option key={s}>{s}</option>; })}</select></div>
+        <div><label className="text-xs text-gray-500">Rolle</label><select value={form.rolle} onChange={function(e) { setForm(Object.assign({}, form, { rolle: e.target.value })); }} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none bg-white"><option value="trainer">Trainer</option><option value="leitung">Leitung</option>{isAdmin && <option value="admin">Admin</option>}</select></div>
+        <div className="flex items-end"><label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer"><input type="checkbox" checked={form.aktiv} onChange={function(e) { setForm(Object.assign({}, form, { aktiv: e.target.checked })); }} />Aktiv</label></div>
+      </div>
+      <div className="flex gap-2"><button onClick={save} className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold rounded-lg">Speichern</button><button onClick={function() { setEdit(null); }} className="px-4 py-2 bg-gray-200 text-gray-700 text-xs font-bold rounded-lg">Abbrechen</button></div>
+    </div>)}
+
+    {pwOk && <div className="mb-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-700">{pwOk}</div>}
+
+    {grouped.map(function(g) { return (<div key={g.s} className="mb-4"><div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{g.s}</div><div className="space-y-1">{g.items.map(function(u) { return (
+      <div key={u.id} className={"flex items-center justify-between px-3 py-2 rounded-lg border text-sm " + (u.aktiv === false ? "bg-gray-50 border-gray-100 opacity-50" : "bg-white border-gray-200")}>
+        <div className="flex items-center gap-3"><span className="text-gray-800">{u.name}</span><span className={"text-xs " + (u.rolle === "admin" ? "text-emerald-600" : u.rolle === "leitung" ? "text-amber-600" : "text-gray-400")}>{u.rolle === "admin" ? "Admin" : u.rolle === "leitung" ? "Leitung" : "Trainer"}</span>{u.aktiv === false && <span className="text-xs text-red-400">deaktiviert</span>}</div>
+        <div className="flex items-center gap-1">
+          {canResetUser(u) && <button onClick={function() { startReset(u); }} title="Passwort zurücksetzen" className="text-xs text-gray-400 hover:text-amber-600 px-2">🔑</button>}
+          <button onClick={function() { startEdit(u); }} title="Bearbeiten" className="text-xs text-gray-400 hover:text-emerald-600 px-2">&#9998;</button>
+        </div>
+      </div>); })}</div></div>); })}
+
+    {pwModal && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={function() { if (!pwLoading) setPwModal(null); }}>
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6" onClick={function(e) { e.stopPropagation(); }}>
+        <div className="text-xs font-bold text-amber-700 uppercase mb-2">Passwort zurücksetzen</div>
+        <div className="text-sm text-gray-700 mb-1"><span className="font-medium">{pwModal.name}</span> · <span className="text-gray-500">{pwModal.studio}</span> · <span className="text-gray-500">{pwModal.rolle === "admin" ? "Admin" : pwModal.rolle === "leitung" ? "Leitung" : "Trainer"}</span></div>
+        <div className="mb-4 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">Du setzt das Passwort eines anderen Users. Gib es mündlich weiter — niemals per E-Mail oder Chat.</div>
+        <div className="space-y-3">
+          <div><label className="text-xs text-gray-500">Neues Passwort (mindestens 8 Zeichen)</label><input type="text" value={pw1} onChange={function(e) { setPw1(e.target.value); }} placeholder="z.B. Reset-2026-Brinkum" className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-amber-500 focus:outline-none font-mono" autoFocus /></div>
+          <div><label className="text-xs text-gray-500">Wiederholen</label><input type="text" value={pw2} onChange={function(e) { setPw2(e.target.value); }} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-amber-500 focus:outline-none font-mono" /></div>
+        </div>
+        {pwErr && <div className="mt-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">{pwErr}</div>}
+        <div className="flex gap-2 mt-4">
+          <button onClick={submitReset} disabled={pwLoading || !pw1 || !pw2} className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:bg-gray-300 text-white text-xs font-bold rounded-lg">{pwLoading ? "Wird gesetzt..." : "Passwort setzen"}</button>
+          <button onClick={function() { setPwModal(null); }} disabled={pwLoading} className="px-4 py-2 bg-gray-200 text-gray-700 text-xs font-bold rounded-lg">Schließen</button>
+        </div>
+      </div>
+    </div>)}
+  </div>);
+}
+
+function ProdukteView({ trainer, produkte, setProdukte, verfuegbarkeit, setVerfuegbarkeit, kategorien, erfolge, setErfolge }) {
+  const katNames = (kategorien && kategorien.length > 0) ? kategorien.map(function(k) { return k.name; }) : KATEGORIEN_FALLBACK;
+  const defaultKat = katNames[0];
+  const [edit, setEdit] = useState(null);
+  const [form, setForm] = useState({ name: "", preis: 0, einheit: "€", kategorie: defaultKat, studios: [] });
+  const [scannedItems, setScannedItems] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [filter, setFilter] = useState("eigenes"); // "eigenes" | "alle"
+  const [deleting, setDeleting] = useState(null); // produkt_id während Löschvorgang
+  const fileRef = useRef(null);
+  const isAdmin = trainer.rolle === "admin";
+
+  const startAdd = function() {
+    // Default: nur eigenes Studio vorausgewählt
+    setForm({ name: "", preis: 0, einheit: "€", kategorie: defaultKat, studios: [trainer.studio] });
+    setEdit("new");
+  };
+  const startEdit = function(p) {
+    setForm({ name: p.name, preis: p.preis, einheit: p.einheit, kategorie: p.kategorie, id: p.id, studios: getProduktStudios(verfuegbarkeit, p.id) });
+    setEdit(p.id);
+  };
+  const toggleStudio = function(s) {
+    setForm(function(f) {
+      const has = f.studios.includes(s);
+      return Object.assign({}, f, { studios: has ? f.studios.filter(function(x) { return x !== s; }) : f.studios.concat([s]) });
+    });
+  };
+
+  const save = async function() {
+    if (!form.name.trim()) return;
+    if (form.studios.length === 0) { alert("Bitte mindestens ein Studio auswählen."); return; }
+    if (edit === "new") {
+      const np = { id: "p" + Date.now(), name: form.name.trim(), preis: form.preis, einheit: form.einheit, kategorie: form.kategorie, aktiv: true, erstellt_von_studio: trainer.studio };
+      await sb.from("produkte").insert([np]);
+      const vRows = form.studios.map(function(s) { return { produkt_id: np.id, studio: s }; });
+      await sb.from("produkt_verfuegbarkeit").insert(vRows);
+      setProdukte(function(prev) { return prev.concat([np]); });
+      setVerfuegbarkeit(function(prev) { return prev.concat(vRows); });
+    } else {
+      // Produkt-Felder updaten
+      await sb.from("produkte").update({ name: form.name.trim(), preis: form.preis, einheit: form.einheit, kategorie: form.kategorie }).eq("id", edit);
+      setProdukte(function(prev) { return prev.map(function(p) { return p.id === edit ? Object.assign({}, p, { name: form.name.trim(), preis: form.preis, einheit: form.einheit, kategorie: form.kategorie }) : p; }); });
+      // Verfügbarkeit syncen: alte raus, neue rein
+      const oldStudios = getProduktStudios(verfuegbarkeit, edit);
+      const toRemove = oldStudios.filter(function(s) { return !form.studios.includes(s); });
+      const toAdd = form.studios.filter(function(s) { return !oldStudios.includes(s); });
+      if (toRemove.length) {
+        await sb.from("produkt_verfuegbarkeit").delete().eq("produkt_id", edit).in("studio", toRemove);
+      }
+      if (toAdd.length) {
+        const newRows = toAdd.map(function(s) { return { produkt_id: edit, studio: s }; });
+        await sb.from("produkt_verfuegbarkeit").insert(newRows);
+      }
+      setVerfuegbarkeit(function(prev) {
+        const filtered = prev.filter(function(v) { return !(v.produkt_id === edit && toRemove.includes(v.studio)); });
+        return filtered.concat(toAdd.map(function(s) { return { produkt_id: edit, studio: s }; }));
+      });
+    }
+    setEdit(null);
+  };
+
+  // Soft-Delete: aktiv = false. Reaktivieren möglich.
+  const toggleAktiv = async function(id) {
+    const p = produkte.find(function(x) { return x.id === id; });
+    await sb.from("produkte").update({ aktiv: !p.aktiv }).eq("id", id);
+    setProdukte(function(prev) { return prev.map(function(x) { return x.id === id ? Object.assign({}, x, { aktiv: !x.aktiv }) : x; }); });
+  };
+
+  // Hard-Delete: nur Admin. Erfolge-Snapshots werden auf "Gelöscht"-Produkt umgehängt,
+  // damit historische Statistiken erhalten bleiben (standardmäßig ausgeblendet).
+  const hardDelete = async function(p) {
+    if (!isAdmin) return;
+    if (p.id === DELETED_PRODUKT_ID) { alert("Das Spezial-Produkt 'Gelöscht' kann nicht gelöscht werden."); return; }
+
+    // Anzahl betroffener Erfolge zählen für Hinweis
+    var affected = 0;
+    erfolge.forEach(function(e) {
+      if (Array.isArray(e.verkauft) && e.verkauft.some(function(v) { return v.id === p.id; })) affected++;
+    });
+
+    var msg = "Produkt '" + p.name + "' endgültig löschen?";
+    if (affected > 0) {
+      msg += "\n\n" + affected + " Erfolg(e) referenzieren dieses Produkt. Die Verkäufe werden auf das Sammel-Produkt 'Gelöscht' umgehängt und sind in Statistiken standardmäßig ausgeblendet.";
+    }
+    msg += "\n\nDieser Schritt kann nicht rückgängig gemacht werden.";
+
+    if (!confirm(msg)) return;
+    setDeleting(p.id);
+
+    try {
+      // Erfolge mit Snapshot-Eintrag dieses Produkts: verkauft-Array umschreiben
+      // ID wird auf p_geloescht umgehängt (für Filter-Logik), Name behält Original mit "(gelöscht)"-Suffix.
+      const affectedErfolge = erfolge.filter(function(e) {
+        return Array.isArray(e.verkauft) && e.verkauft.some(function(v) { return v.id === p.id; });
+      });
+      for (var i = 0; i < affectedErfolge.length; i++) {
+        var e = affectedErfolge[i];
+        var newVerkauft = e.verkauft.map(function(v) {
+          if (v.id !== p.id) return v;
+          var origName = v.name || p.name;
+          // Idempotent: kein doppeltes "(gelöscht)" anhängen
+          var newName = origName.endsWith("(gelöscht)") ? origName : origName + " (gelöscht)";
+          return { id: DELETED_PRODUKT_ID, name: newName, preis: Number(v.preis) || 0 };
+        });
+        const upd = await sb.from("erfolge").update({ verkauft: newVerkauft }).eq("id", e.id);
+        if (upd.error) throw upd.error;
+      }
+
+      // Verfügbarkeiten löschen (FK-Cleanup)
+      const delV = await sb.from("produkt_verfuegbarkeit").delete().eq("produkt_id", p.id);
+      if (delV.error) throw delV.error;
+
+      // Produkt löschen
+      const delP = await sb.from("produkte").delete().eq("id", p.id);
+      if (delP.error) throw delP.error;
+
+      // Lokalen State aktualisieren
+      setProdukte(function(prev) { return prev.filter(function(x) { return x.id !== p.id; }); });
+      setVerfuegbarkeit(function(prev) { return prev.filter(function(v) { return v.produkt_id !== p.id; }); });
+      if (setErfolge) {
+        setErfolge(function(prev) { return prev.map(function(e) {
+          if (!Array.isArray(e.verkauft) || !e.verkauft.some(function(v) { return v.id === p.id; })) return e;
+          return Object.assign({}, e, { verkauft: e.verkauft.map(function(v) {
+            if (v.id !== p.id) return v;
+            var origName = v.name || p.name;
+            var newName = origName.endsWith("(gelöscht)") ? origName : origName + " (gelöscht)";
+            return { id: DELETED_PRODUKT_ID, name: newName, preis: Number(v.preis) || 0 };
+          }) });
+        }); });
+      }
+    } catch (err) {
+      alert("Fehler beim Löschen: " + (err.message || JSON.stringify(err)));
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const handleUpload = async function(e) {
+    const file = e.target.files[0]; if (!file) return;
+    setUploading(true);
+    const reader = new FileReader();
+    reader.onload = async function() { const b64 = reader.result.split(",")[1]; const items = await parseScreenshot(b64); setScannedItems(items.map(function(it) { return Object.assign({}, it, { selected: true }); })); setUploading(false); };
+    reader.readAsDataURL(file);
+  };
+  const addScanned = async function() {
+    const toAdd = scannedItems.filter(function(it) { return it.selected; });
+    if (!toAdd.length) return;
+    const newP = toAdd.map(function(it) { return { id: "p" + Date.now() + Math.random().toString(36).slice(2,6), name: it.name, preis: it.preis || 0, einheit: "€", kategorie: "Produkt", aktiv: true, erstellt_von_studio: trainer.studio }; });
+    await sb.from("produkte").insert(newP);
+    // Scanned Produkte werden direkt für das eigene Studio freigeschaltet (kann später erweitert werden)
+    const vRows = newP.map(function(p) { return { produkt_id: p.id, studio: trainer.studio }; });
+    await sb.from("produkt_verfuegbarkeit").insert(vRows);
+    setProdukte(function(prev) { return prev.concat(newP); });
+    setVerfuegbarkeit(function(prev) { return prev.concat(vRows); });
+    setScannedItems([]);
+  };
+  const toggleScanned = function(idx) { var n = scannedItems.slice(); n[idx] = Object.assign({}, n[idx], { selected: !n[idx].selected }); setScannedItems(n); };
+
+  // Filter: "eigenes" zeigt nur Produkte, die in trainer.studio verfügbar sind. "alle" zeigt alle.
+  // Spezial-Produkt "Gelöscht" wird in der Produkt-Verwaltung NIE angezeigt.
+  const sichtbar = produkte.filter(function(p) { return p.id !== DELETED_PRODUKT_ID; });
+  const visible = filter === "eigenes"
+    ? sichtbar.filter(function(p) { return getProduktStudios(verfuegbarkeit, p.id).includes(trainer.studio); })
+    : sichtbar;
+  const grouped = katNames.map(function(k) { return { k: k, items: visible.filter(function(p) { return p.kategorie === k; }) }; }).filter(function(g) { return g.items.length > 0; });
+
+  return (<div className="max-w-3xl mx-auto p-4">
+    <div className="flex items-center justify-between mb-4"><div className="text-xs font-bold text-gray-400 uppercase tracking-wider">Produkte konfigurieren</div><button onClick={startAdd} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg">+ Produkt</button></div>
+
+    <div className="flex gap-1 mb-4">
+      <button onClick={function() { setFilter("eigenes"); }} className={"px-3 py-1.5 rounded-full text-xs font-medium transition-colors " + (filter === "eigenes" ? "bg-emerald-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>{trainer.studio}</button>
+      <button onClick={function() { setFilter("alle"); }} className={"px-3 py-1.5 rounded-full text-xs font-medium transition-colors " + (filter === "alle" ? "bg-emerald-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>Alle Studios</button>
+    </div>
+
+    <div className="mb-4 border border-dashed border-gray-300 rounded-lg p-4">
+      <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Produkte aus Magicline importieren</div>
+      <p className="text-xs text-gray-500 mb-3">Screenshot aus der Magicline Verkaufsansicht hochladen. Wird automatisch für {trainer.studio} freigeschaltet.</p>
+      <input ref={fileRef} type="file" accept="image/*" onChange={handleUpload} className="hidden" />
+      <button onClick={function() { fileRef.current.click(); }} disabled={uploading} className="w-full py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-medium rounded-lg transition-colors">{uploading ? "Wird analysiert..." : "Screenshot hochladen"}</button>
+      {scannedItems.length > 0 && (<div className="mt-3 space-y-1">
+        <div className="text-xs text-gray-500 mb-1">Erkannte Produkte:</div>
+        {scannedItems.map(function(it, idx) { return <button key={idx} onClick={function() { toggleScanned(idx); }} className={"w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-all border " + (it.selected ? "bg-emerald-50 border-emerald-300 text-emerald-800" : "bg-white border-gray-200 text-gray-400 line-through")}><span className="mr-2">{it.selected ? "✓" : "○"}</span>{it.name} -- {(it.preis || 0).toFixed(2)}€</button>; })}
+        <button onClick={addScanned} className="w-full mt-2 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition-colors">Ausgewählte Produkte hinzufügen</button>
+      </div>)}
+    </div>
+
+    {edit && (<div className="mb-4 p-4 bg-white border border-emerald-300 rounded-lg space-y-3">
+      <div className="text-xs font-bold text-emerald-700 uppercase">{edit === "new" ? "Neues Produkt" : "Bearbeiten"}</div>
+      <div className="grid grid-cols-2 gap-3">
+        <div><label className="text-xs text-gray-500">Name</label><input value={form.name} onChange={function(e) { setForm(Object.assign({}, form, { name: e.target.value })); }} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none" /></div>
+        <div><label className="text-xs text-gray-500">Kategorie</label><select value={form.kategorie} onChange={function(e) { setForm(Object.assign({}, form, { kategorie: e.target.value })); }} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none bg-white">{katNames.map(function(k) { return <option key={k}>{k}</option>; })}</select></div>
+        <div><label className="text-xs text-gray-500">Preis</label><input type="number" step="0.01" value={form.preis} onChange={function(e) { setForm(Object.assign({}, form, { preis: parseFloat(e.target.value) || 0 })); }} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none" /></div>
+        <div><label className="text-xs text-gray-500">Einheit</label><select value={form.einheit} onChange={function(e) { setForm(Object.assign({}, form, { einheit: e.target.value })); }} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none bg-white"><option value="€">€ (einmalig)</option><option value="€/Monat">€/Monat</option><option value="€/Woche">€/Woche</option></select></div>
+      </div>
+      <div>
+        <label className="text-xs text-gray-500 block mb-2">Verfügbar in Studios</label>
+        <div className="flex flex-wrap gap-2">
+          {STUDIOS.map(function(s) { var on = form.studios.includes(s); return (
+            <button key={s} onClick={function() { toggleStudio(s); }} className={"px-3 py-1.5 rounded-full text-xs font-medium transition-colors border " + (on ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "bg-white border-gray-200 text-gray-500")}>
+              {on ? "✓ " : ""}{s}
+            </button>); })}
+        </div>
+        {form.studios.length === 0 && <div className="text-xs text-red-500 mt-1">Mindestens ein Studio auswählen</div>}
+      </div>
+      <div className="flex gap-2"><button onClick={save} className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold rounded-lg">Speichern</button><button onClick={function() { setEdit(null); }} className="px-4 py-2 bg-gray-200 text-gray-700 text-xs font-bold rounded-lg">Abbrechen</button></div>
+    </div>)}
+
+    {grouped.length === 0 && <div className="text-center py-8 text-gray-400 text-sm">Keine Produkte {filter === "eigenes" ? "in " + trainer.studio : "im System"}.</div>}
+    {grouped.map(function(g) { return (<div key={g.k} className="mb-4"><div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{g.k}</div><div className="space-y-1">{g.items.map(function(p) {
+      var studios = getProduktStudios(verfuegbarkeit, p.id);
+      var inStudio = studios.includes(trainer.studio);
+      return (
+      <div key={p.id} className={"flex items-center justify-between px-3 py-2 rounded-lg border text-sm " + (p.aktiv ? "bg-white border-gray-200" : "bg-gray-50 border-gray-100 opacity-50")}>
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          <button onClick={function() { toggleAktiv(p.id); }} title={p.aktiv ? "Deaktivieren (Soft-Delete)" : "Reaktivieren"} className={"w-5 h-5 rounded border flex items-center justify-center text-xs flex-shrink-0 " + (p.aktiv ? "bg-emerald-500 border-emerald-500 text-white" : "border-gray-300")}>{p.aktiv ? "✓" : ""}</button>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className={p.aktiv ? "text-gray-800" : "text-gray-400"}>{p.name}</span>
+              {p.preis > 0 && <span className="text-xs text-gray-400 flex-shrink-0">{p.preis}{p.einheit && p.einheit.includes("Monat") ? "€/Mo" : p.einheit && p.einheit.includes("Woche") ? "€/Wo" : "€"}</span>}
+            </div>
+            <div className="text-xs text-gray-400 truncate">{studios.length === STUDIOS.length ? "Alle Studios" : studios.join(", ") || "Kein Studio"}</div>
+          </div>
+        </div>
+        <div className="flex gap-1 flex-shrink-0">
+          <button onClick={function() { startEdit(p); }} title="Bearbeiten" className="text-xs text-gray-400 hover:text-emerald-600 px-2">&#9998;</button>
+          {isAdmin && <button onClick={function() { hardDelete(p); }} disabled={deleting === p.id} title="Endgültig löschen (Admin)" className="text-xs text-gray-400 hover:text-red-600 px-2 disabled:opacity-30">{deleting === p.id ? "…" : "×"}</button>}
+        </div>
+      </div>); })}</div></div>); })}
+  </div>);
+}
+
+function StudioTippsView({ trainer }) {
+  const [val, setVal] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(function() {
+    sb.from("studio_tipps").select("tipps").eq("studio", trainer.studio).single().then(function(res) {
+      if (res.data) setVal(res.data.tipps || "");
+      setLoaded(true);
+    });
+  }, [trainer.studio]);
+  const save = async function() {
+    await sb.from("studio_tipps").upsert({ studio: trainer.studio, tipps: val, updated_at: new Date().toISOString() });
+    setSaved(true); setTimeout(function() { setSaved(false); }, 1500);
+  };
+  if (!loaded) return <div className="max-w-3xl mx-auto p-4 text-sm text-gray-500">Lade...</div>;
+  return (<div className="max-w-3xl mx-auto p-4">
+    <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Studio-spezifische Trainingstipps</div>
+    <p className="text-sm text-gray-600 mb-4">Diese Tipps fließen automatisch in jedes Briefing ein.</p>
+    {saved && <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-700 font-medium">&#10003; Gespeichert</div>}
+    <textarea value={val} onChange={function(e) { setVal(e.target.value); }} rows="8" placeholder="z.B. Aktuell Figuroffensive: Bei Abnehmzielen immer myshape empfehlen." className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none resize-none bg-white" />
+    <button onClick={save} className="mt-3 w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-sm transition-colors">Tipps speichern</button>
+  </div>);
+}
+
+function ZieleView({ trainer, produkte, verfuegbarkeit, ziele, setZiele, erfolge }) {
+  const [edit, setEdit] = useState(null);
+  const [form, setForm] = useState({ produkt_id: "", produkt_name: "", ziel_anzahl: 5, zeitraum_von: "", zeitraum_bis: "" });
+  const studioZiele = ziele.filter(function(z) { return z.studio === trainer.studio; });
+  const studioProdukte = getStudioProdukte(produkte, verfuegbarkeit, trainer.studio);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const startAdd = function() {
+    var mon = new Date(); var sun = new Date(mon); sun.setDate(mon.getDate() + (7 - mon.getDay()));
+    var monStr = mon.toISOString().slice(0,10); var sunStr = sun.toISOString().slice(0,10);
+    setForm({ produkt_id: "", produkt_name: "", ziel_anzahl: 5, zeitraum_von: monStr, zeitraum_bis: sunStr });
+    setEdit("new");
+  };
+
+  const save = async function() {
+    if (!form.produkt_name || !form.zeitraum_von || !form.zeitraum_bis) return;
+    var nz = { id: "z" + Date.now(), studio: trainer.studio, produkt_id: form.produkt_id, produkt_name: form.produkt_name, ziel_anzahl: form.ziel_anzahl, zeitraum_von: form.zeitraum_von, zeitraum_bis: form.zeitraum_bis, erstellt_von: trainer.name };
+    await sb.from("ziele").insert([nz]);
+    setZiele(function(prev) { return prev.concat([nz]); });
+    setEdit(null);
+  };
+
+  const del = async function(id) {
+    await sb.from("ziele").delete().eq("id", id);
+    setZiele(function(prev) { return prev.filter(function(z) { return z.id !== id; }); });
+  };
+
+  const getProgress = function(z) {
+    return erfolge.filter(function(e) {
+      if (e.studio !== trainer.studio) return false;
+      var d = new Date(e.datum); var von = new Date(z.zeitraum_von); var bis = new Date(z.zeitraum_bis); bis.setHours(23,59,59);
+      if (d < von || d > bis) return false;
+      if (!z.produkt_id) return true;
+      return (e.verkauft || []).some(function(v) { return (v.id || v) === z.produkt_id; });
+    }).reduce(function(sum, e) {
+      if (!z.produkt_id) return sum + (e.verkauft || []).length;
+      return sum + (e.verkauft || []).filter(function(v) { return (v.id || v) === z.produkt_id; }).length;
+    }, 0);
+  };
+
+  var aktive = studioProdukte;
+
+  return (<div className="max-w-3xl mx-auto p-4">
+    <div className="flex items-center justify-between mb-4"><div className="text-xs font-bold text-gray-400 uppercase tracking-wider">Ziele verwalten</div><button onClick={startAdd} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg">+ Ziel</button></div>
+    {edit && (<div className="mb-4 p-4 bg-white border border-emerald-300 rounded-lg space-y-3">
+      <div className="text-xs font-bold text-emerald-700 uppercase">Neues Ziel</div>
+      <div className="grid grid-cols-2 gap-3">
+        <div><label className="text-xs text-gray-500">Produkt</label><select value={form.produkt_id} onChange={function(e) { var p = aktive.find(function(x) { return x.id === e.target.value; }); setForm(Object.assign({}, form, { produkt_id: e.target.value, produkt_name: p ? p.name : "Alle Verkäufe" })); }} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none bg-white"><option value="">Alle Verkäufe</option>{aktive.map(function(p) { return <option key={p.id} value={p.id}>{p.name}</option>; })}</select></div>
+        <div><label className="text-xs text-gray-500">Ziel-Anzahl</label><input type="number" value={form.ziel_anzahl} onChange={function(e) { setForm(Object.assign({}, form, { ziel_anzahl: parseInt(e.target.value) || 1 })); }} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none" /></div>
+        <div><label className="text-xs text-gray-500">Von</label><input type="date" value={form.zeitraum_von} onChange={function(e) { setForm(Object.assign({}, form, { zeitraum_von: e.target.value })); }} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none" /></div>
+        <div><label className="text-xs text-gray-500">Bis</label><input type="date" value={form.zeitraum_bis} onChange={function(e) { setForm(Object.assign({}, form, { zeitraum_bis: e.target.value })); }} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none" /></div>
+      </div>
+      <div className="flex gap-2"><button onClick={save} className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold rounded-lg">Speichern</button><button onClick={function() { setEdit(null); }} className="px-4 py-2 bg-gray-200 text-gray-700 text-xs font-bold rounded-lg">Abbrechen</button></div>
+    </div>)}
+    <div className="space-y-3">
+      {studioZiele.length === 0 && <div className="text-center py-8 text-gray-400 text-sm">Noch keine Ziele definiert.</div>}
+      {studioZiele.sort(function(a,b) { return new Date(b.zeitraum_bis) - new Date(a.zeitraum_bis); }).map(function(z) {
+        var progress = getProgress(z);
+        var pct = Math.min((progress / z.ziel_anzahl) * 100, 100);
+        var isActive = today >= z.zeitraum_von && today <= z.zeitraum_bis;
+        var isDone = progress >= z.ziel_anzahl;
+        return (<div key={z.id} className={"bg-white border rounded-lg p-4 " + (isDone ? "border-emerald-300" : isActive ? "border-gray-200" : "border-gray-100 opacity-60")}>
+          <div className="flex items-center justify-between mb-2">
+            <div><div className="text-sm font-medium text-gray-800">{z.produkt_name || "Alle Verkäufe"}</div><div className="text-xs text-gray-400">{new Date(z.zeitraum_von).toLocaleDateString("de-DE")} – {new Date(z.zeitraum_bis).toLocaleDateString("de-DE")} · von {z.erstellt_von}</div></div>
+            <div className="flex items-center gap-2">
+              <span className={"text-sm font-bold " + (isDone ? "text-emerald-600" : "text-gray-700")}>{progress}/{z.ziel_anzahl}</span>
+              <button onClick={function() { del(z.id); }} className="text-xs text-gray-400 hover:text-red-600">&#10005;</button>
+            </div>
+          </div>
+          <div className="h-3 bg-gray-100 rounded-full overflow-hidden"><div className={"h-full rounded-full transition-all " + (isDone ? "bg-emerald-500" : "bg-amber-400")} style={{ width: pct + "%" }}></div></div>
+        </div>);
+      })}
+    </div>
+  </div>);
+}
+
+function DashboardView({ trainer, produkte, erfolge, ziele, kategorien, terminarten, erfolgeFullLoad, reloadErfolge, erfolgeReloading }) {
+  const isL = trainer.rolle === "leitung";
+  const isAdmin = trainer.rolle === "admin";
+  const isTrainer = trainer.rolle === "trainer";
+  const [von, setVon] = useState("");
+  const [bis, setBis] = useState("");
+  const [kat, setKat] = useState("Alle");
+  const [tartFilter, setTartFilter] = useState("Alle");
+  const [showDeleted, setShowDeleted] = useState(false);
+  const studioData = erfolge.filter(function(x) { return x.studio === trainer.studio; });
+  // Trainer sehen nur eigene Erfolge in ihrem Studio
+  const baseData = isTrainer
+    ? erfolge.filter(function(x) { return x.studio === trainer.studio && x.trainer_id === trainer.id; })
+    : studioData;
+  const inZeitraum = function(e) {
+    var d = new Date(e.datum);
+    if (von && d < new Date(von)) return false;
+    if (bis) { var b = new Date(bis); b.setHours(23,59,59); if (d > b) return false; }
+    return true;
+  };
+  // dataAll = Erfolge im Zeitraum aus baseData (Studio für Leitung/Admin, eigene für Trainer)
+  // data    = zusätzlich nach Terminart-Filter (für Verkaufs-Auswertung)
+  const dataAll = baseData.filter(inZeitraum);
+  const data = tartFilter === "Alle" ? dataAll : dataAll.filter(function(e) { return e.terminart === tartFilter; });
+  var getKat = function(vid) { var p = produkte.find(function(x) { return x.id === vid; }); return p ? p.kategorie : "Sonstige"; };
+  var filterV = function(vList) {
+    var arr = vList || [];
+    if (!showDeleted) arr = arr.filter(function(v) { return (v.id || v) !== DELETED_PRODUKT_ID; });
+    if (kat === "Alle") return arr;
+    return arr.filter(function(v) { return getKat(v.id || v) === kat; });
+  };
+  // Helper: prüft ob Item eine Aktivität ist (kein echter Verkauf)
+  var isAktivitaet = function(vid) {
+    var p = produkte.find(function(x) { return x.id === vid; });
+    return p ? p.ist_aktivitaet === true : false;
+  };
+  var pc = {};
+  data.forEach(function(e) { filterV(e.verkauft).forEach(function(v) { var id = v.id || v; if (isAktivitaet(id)) return; var nm = v.name || v; pc[id] = pc[id] || { name: nm, count: 0, umsatz: 0 }; pc[id].count++; pc[id].umsatz += (Number(v.preis) || 0); }); });
+  // pc enthält schon nur echte Verkäufe (ohne Aktivitäten), totalV/totalU stimmt damit automatisch
+  var totalV = 0; var totalU = 0; Object.values(pc).forEach(function(x) { totalV += x.count; totalU += x.umsatz; });
+  var sp = Object.entries(pc).map(function(entry) { return { id: entry[0], name: entry[1].name, count: entry[1].count, umsatz: entry[1].umsatz }; }).sort(function(a, b) { return b.count - a.count; });
+  var mx = 1; sp.forEach(function(s) { if (s.count > mx) mx = s.count; });
+  var tc = {};
+  var tp = {};
+  if (isL || isAdmin) data.forEach(function(e) { var fv = filterV(e.verkauft); tc[e.trainer] = tc[e.trainer] || { c: 0, v: 0, u: 0 }; tc[e.trainer].c++; tp[e.trainer] = tp[e.trainer] || {}; fv.forEach(function(v) { var vid = v.id || v; if (isAktivitaet(vid)) return; tc[e.trainer].v++; tc[e.trainer].u += (Number(v.preis) || 0); var vnm = v.name || v; tp[e.trainer][vid] = tp[e.trainer][vid] || { name: vnm, count: 0, preis: Number(v.preis) || 0 }; tp[e.trainer][vid].count++; }); });
+  var ac = {};
+  var tartListDash = (terminarten && terminarten.length > 0) ? terminarten : TERMINARTEN_FALLBACK;
+  // Terminarten-Übersicht: ALLE Termine im Zeitraum (unabhängig vom aktuell gesetzten Terminart-Filter)
+  dataAll.forEach(function(e) { var t = tartListDash.find(function(t) { return t.id === e.terminart; }); var l = t ? t.label : e.terminart; ac[l] = (ac[l] || 0) + 1; });
+  var sv = {};
+  if (isL || isAdmin) {
+    erfolge.filter(inZeitraum).filter(function(e) { return tartFilter === "Alle" || e.terminart === tartFilter; })
+      .forEach(function(e) { sv[e.studio] = sv[e.studio] || { termine: 0, verkaufe: 0, umsatz: 0 }; sv[e.studio].termine++; filterV(e.verkauft).forEach(function(v) { var vid = v.id || v; if (isAktivitaet(vid)) return; sv[e.studio].verkaufe++; sv[e.studio].umsatz += (Number(v.preis) || 0); }); });
+  }
+  var dashKatNames = (kategorien && kategorien.length > 0) ? kategorien.map(function(k) { return k.name; }).filter(function(n) { return n !== "Aktivitäten"; }) : KATEGORIEN_FALLBACK;
+  var katFilter = ["Alle"].concat(dashKatNames);
+  // Terminart-Filter-Optionen: Einzeltermine (Gruppentermine = Fitexpress haben eigenen Block unten)
+  var tartFilterOptions = [{ id: "Alle", label: "Alle Terminarten" }].concat(
+    tartListDash.filter(function(t) { return !t.is_gruppentermin; })
+      .slice().sort(function(a, b) { return a.label.localeCompare(b.label, "de"); })
+      .map(function(t) { return { id: t.id, label: t.label }; })
+  );
+  var today = new Date().toISOString().slice(0, 10);
+  var benchmark = {};
+  erfolge.filter(inZeitraum).filter(function(e) { return tartFilter === "Alle" || e.terminart === tartFilter; }).forEach(function(e) {
+    benchmark[e.studio] = benchmark[e.studio] || { termine: 0, verkaufe: 0, umsatz: 0 };
+    benchmark[e.studio].termine++;
+    filterV(e.verkauft).forEach(function(v) { benchmark[e.studio].verkaufe++; benchmark[e.studio].umsatz += (Number(v.preis) || 0); });
+  });
+  var bmStudios = Object.keys(benchmark).length;
+  var bmAvgV = bmStudios > 0 ? Object.values(benchmark).reduce(function(s, b) { return s + (b.termine > 0 ? b.verkaufe / b.termine : 0); }, 0) / bmStudios : 0;
+  var bmAvgU = bmStudios > 0 ? Object.values(benchmark).reduce(function(s, b) { return s + (b.termine > 0 ? b.umsatz / b.termine : 0); }, 0) / bmStudios : 0;
+  var myBm = benchmark[trainer.studio] || { termine: 0, verkaufe: 0, umsatz: 0 };
+  var myAvgV = myBm.termine > 0 ? myBm.verkaufe / myBm.termine : 0;
+  var myAvgU = myBm.termine > 0 ? myBm.umsatz / myBm.termine : 0;
+
+  // ============== 3-KPI-BLOCK: Seminareintragungs-Quote, Folgetermin-Quote, Umsatz/Termin ==============
+  // Ziel-Terminarten für Seminareintragung-Quote: Starttermin + 1. Termin Einweisung
+  var SEMINAR_KPI_TARTS = ["t_starttermin", "t_einweisung_intensiv"];
+  var SEMINAR_PROD_ID = "p_aktivitaet_seminar";
+  var FOLGETERMIN_PROD_ID = "p_aktivitaet_folgetermin";
+  var INBODY_PROD_ID = "p_aktivitaet_inbody";
+
+  // Helper: berechnet KPIs für einen Erfolgs-Datensatz
+  var calcKpis = function(erfolgList) {
+    var startTermine = erfolgList.filter(function(e) { return SEMINAR_KPI_TARTS.includes(e.terminart); });
+    var seminarEintragungen = 0;
+    startTermine.forEach(function(e) {
+      (e.verkauft || []).forEach(function(v) { if ((v.id || v) === SEMINAR_PROD_ID) seminarEintragungen++; });
+    });
+    var folgeTermineSet = 0;
+    erfolgList.forEach(function(e) {
+      if ((e.verkauft || []).some(function(v) { return (v.id || v) === FOLGETERMIN_PROD_ID; })) folgeTermineSet++;
+    });
+    var einzelTermine = erfolgList.filter(function(e) {
+      var t = tartListDash.find(function(t) { return t.id === e.terminart; });
+      return !t || !t.is_gruppentermin;
+    });
+    var umsatz = 0;
+    einzelTermine.forEach(function(e) {
+      (e.verkauft || []).forEach(function(v) { umsatz += (Number(v.preis) || 0); });
+    });
+    return {
+      anzStartTermine: startTermine.length,
+      seminarEintragungen: seminarEintragungen,
+      seminarQuote: startTermine.length > 0 ? seminarEintragungen / startTermine.length : 0,
+      anzTermine: erfolgList.length,
+      folgeTermineSet: folgeTermineSet,
+      folgeQuote: erfolgList.length > 0 ? (folgeTermineSet / erfolgList.length) : 0,
+      anzEinzelTermine: einzelTermine.length,
+      umsatz: umsatz,
+      umsatzProTermin: einzelTermine.length > 0 ? umsatz / einzelTermine.length : 0
+    };
+  };
+
+  // Eigene KPIs (aus dataAll = baseData im Zeitraum)
+  var myKpis = calcKpis(dataAll);
+
+  // Vergleichs-KPIs:
+  //   Trainer:        Studio-Schnitt (alle Erfolge im eigenen Studio im Zeitraum)
+  //   Leitung/Admin:  FP-Schnitt (alle Studios im Zeitraum, gemittelt)
+  var compareKpis;
+  var compareLabel;
+  if (isTrainer) {
+    var studioErfolge = erfolge.filter(function(e) { return e.studio === trainer.studio; }).filter(inZeitraum);
+    compareKpis = calcKpis(studioErfolge);
+    compareLabel = "Studio-Schnitt " + trainer.studio;
+  } else {
+    // FP-Schnitt = pro Studio aggregieren, dann Mittelwerte der Quoten/Umsätze nehmen
+    var byStudio = {};
+    erfolge.filter(inZeitraum).forEach(function(e) {
+      if (!byStudio[e.studio]) byStudio[e.studio] = [];
+      byStudio[e.studio].push(e);
+    });
+    var perStudioKpis = Object.values(byStudio).map(calcKpis);
+    var avg = function(arr, fn) { var vals = arr.map(fn); return vals.length > 0 ? vals.reduce(function(s, v) { return s + v; }, 0) / vals.length : 0; };
+    compareKpis = {
+      seminarQuote: avg(perStudioKpis, function(k) { return k.seminarQuote; }),
+      folgeQuote: avg(perStudioKpis, function(k) { return k.folgeQuote; }),
+      umsatzProTermin: avg(perStudioKpis, function(k) { return k.umsatzProTermin; })
+    };
+    compareLabel = "FITNESS PARK Durchschnitt";
+  }
+  // ============== ENDE 3-KPI-BLOCK ==============
+
+  // ============== FITEXPRESS-AUSWERTUNG ==============
+  var gruppenTartIds = tartListDash.filter(function(t) { return t.is_gruppentermin; }).map(function(t) { return t.id; });
+  var fitexpressData = baseData.filter(inZeitraum).filter(function(e) { return gruppenTartIds.includes(e.terminart); });
+  var fxByTrainer = {};
+  fitexpressData.forEach(function(e) {
+    var key = e.trainer || "Unbekannt";
+    if (!fxByTrainer[key]) fxByTrainer[key] = { count: 0, teilnehmerSum: 0 };
+    fxByTrainer[key].count++;
+    fxByTrainer[key].teilnehmerSum += (Number(e.teilnehmer_anzahl) || 0);
+  });
+  var fxTrainerList = Object.entries(fxByTrainer).map(function(entry) {
+    var n = entry[0]; var d = entry[1];
+    return { name: n, count: d.count, total: d.teilnehmerSum, avg: d.count > 0 ? d.teilnehmerSum / d.count : 0 };
+  }).sort(function(a, b) { return b.total - a.total; });
+  var fxTotalCount = fitexpressData.length;
+  var fxTotalTeilnehmer = fitexpressData.reduce(function(s, e) { return s + (Number(e.teilnehmer_anzahl) || 0); }, 0);
+  var fxAvg = fxTotalCount > 0 ? fxTotalTeilnehmer / fxTotalCount : 0;
+  var fxMaxAvg = fxTrainerList.reduce(function(m, x) { return Math.max(m, x.avg); }, 1);
+  // ============== ENDE FITEXPRESS ==============
+  return (<div className="max-w-4xl mx-auto p-4">
+    <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">{isTrainer ? "Mein Dashboard · " + trainer.name : "Dashboard · " + trainer.studio}</div>
+    <div className="mb-3 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg flex items-center justify-between text-xs">
+      <span className="text-gray-600">{erfolgeFullLoad ? "Geladen: alle Erfolge" : "Geladen: Erfolge der letzten 30 Tage"}</span>
+      <button onClick={function() { reloadErfolge(!erfolgeFullLoad); }} disabled={erfolgeReloading} className="text-emerald-600 hover:text-emerald-700 font-medium disabled:opacity-50">
+        {erfolgeReloading ? "Lade..." : (erfolgeFullLoad ? "Auf 30 Tage zurück" : "Alle Erfolge laden")}
+      </button>
+    </div>
+    <div className="flex items-center gap-3 mb-3 flex-wrap">
+      <div className="flex items-center gap-2"><label className="text-xs text-gray-500">Von</label><input type="date" value={von} onChange={function(e) { setVon(e.target.value); }} className="px-2 py-1.5 border border-gray-300 rounded-lg text-xs focus:border-emerald-500 focus:outline-none" /></div>
+      <div className="flex items-center gap-2"><label className="text-xs text-gray-500">Bis</label><input type="date" value={bis} onChange={function(e) { setBis(e.target.value); }} className="px-2 py-1.5 border border-gray-300 rounded-lg text-xs focus:border-emerald-500 focus:outline-none" /></div>
+      {(von || bis) && <button onClick={function() { setVon(""); setBis(""); }} className="text-xs text-red-400 hover:text-red-600">&#10005; Reset</button>}
+      {isAdmin && <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer ml-auto" title="Verkäufe gelöschter Produkte in der Statistik einblenden"><input type="checkbox" checked={showDeleted} onChange={function(e) { setShowDeleted(e.target.checked); }} className="cursor-pointer" />Gelöschte einblenden</label>}
+    </div>
+    <div className="mb-3">
+      <label className="text-xs text-gray-500 mb-1 block">Terminart</label>
+      <select value={tartFilter} onChange={function(e) { setTartFilter(e.target.value); }} className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:border-emerald-500 focus:outline-none bg-white">
+        {tartFilterOptions.map(function(t) { return <option key={t.id} value={t.id}>{t.label}</option>; })}
+      </select>
+      {tartFilter !== "Alle" && <span className="ml-2 text-xs text-amber-600">Filter aktiv — Fitexpresse haben eigenen Block unten</span>}
+    </div>
+    <div className="flex gap-1 mb-1 flex-wrap">
+      {katFilter.map(function(k) { return <button key={k} onClick={function() { setKat(k); }} className={"px-3 py-1 rounded-full text-xs font-medium transition-colors " + (kat === k ? "bg-emerald-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>{k}</button>; })}
+    </div>
+    <div className="text-xs text-gray-400 mb-4">Kategorie filtert nur die <span className="font-medium">Verkäufe</span> in den Auswertungen.</div>
+    {!data.length && fxTotalCount === 0 ? <div className="text-center py-12 text-gray-400 text-sm">Keine Erfolge im gewählten Zeitraum.</div> : (<div>
+      {!data.length && fxTotalCount > 0 && <div className="text-center py-6 text-gray-400 text-sm">Keine Einzeltermine im Zeitraum (Fitexpresse siehe unten).</div>}
+      {data.length > 0 && function() { var activeZiele = ziele.filter(function(z) { return z.studio === trainer.studio && today >= z.zeitraum_von && today <= z.zeitraum_bis; }); if (activeZiele.length === 0) return null; return (<div className="mb-4"><div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Aktuelle Ziele</div><div className="grid grid-cols-2 gap-2">{activeZiele.map(function(z) { var prog = erfolge.filter(function(e) { if (e.studio !== trainer.studio) return false; var d = new Date(e.datum); if (d < new Date(z.zeitraum_von) || d > new Date(z.zeitraum_bis + "T23:59:59")) return false; if (!z.produkt_id) return true; return (e.verkauft || []).some(function(v) { return (v.id || v) === z.produkt_id; }); }).reduce(function(s, e) { if (!z.produkt_id) return s + (e.verkauft || []).length; return s + (e.verkauft || []).filter(function(v) { return (v.id || v) === z.produkt_id; }).length; }, 0); var pct = Math.min((prog / z.ziel_anzahl) * 100, 100); var done = prog >= z.ziel_anzahl; return (<div key={z.id} className={"bg-white border rounded-lg p-3 " + (done ? "border-emerald-300" : "border-gray-200")}><div className="flex justify-between text-xs mb-1"><span className="text-gray-600 font-medium">{z.produkt_name || "Alle Verkäufe"}</span><span className={"font-bold " + (done ? "text-emerald-600" : "text-gray-700")}>{prog}/{z.ziel_anzahl}</span></div><div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className={"h-full rounded-full " + (done ? "bg-emerald-500" : "bg-amber-400")} style={{ width: pct + "%" }}></div></div></div>); })}</div></div>); }()}
+      {data.length > 0 && (<div>
+      <div className="grid grid-cols-4 gap-3 mb-4">
+        <div className="bg-white border border-gray-200 rounded-lg p-4 text-center"><div className="text-2xl font-black text-gray-900">{data.length}</div><div className="text-xs text-gray-500 mt-1">{tartFilter === "Alle" ? "Termine gesamt" : "Termine (gefiltert)"}</div></div>
+        <div className="bg-white border border-gray-200 rounded-lg p-4 text-center"><div className="text-2xl font-black text-emerald-600">{totalV}</div><div className="text-xs text-gray-500 mt-1">{kat === "Alle" ? "Verkäufe" : "Verkäufe " + kat}</div></div>
+        <div className="bg-white border border-gray-200 rounded-lg p-4 text-center"><div className="text-2xl font-black text-gray-900">{data.length ? (totalU / data.length).toFixed(0) : "0"}€</div><div className="text-xs text-gray-500 mt-1">Ø Umsatz/Termin</div></div>
+        <div className="bg-white border border-gray-200 rounded-lg p-4 text-center"><div className="text-2xl font-black text-emerald-600">{totalU.toFixed(0)}€</div><div className="text-xs text-gray-500 mt-1">{kat === "Alle" ? "Gesamtumsatz" : "Umsatz " + kat}</div></div>
+      </div>
+
+      {/* ============== 3-KPI-BENCHMARK-BLOCK ============== */}
+      <div className="bg-white border border-blue-200 rounded-lg p-4 mb-4">
+        <div className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-3">{isTrainer ? "Meine Werte vs " + compareLabel : trainer.studio + " vs " + compareLabel}</div>
+        <div className="grid grid-cols-3 gap-4">
+          {/* KPI 1: Seminareintragungs-Quote */}
+          <div className="text-center">
+            <div className="text-xs text-gray-500 mb-1">Seminareintragungen</div>
+            <div className="text-xs text-gray-400 mb-2">pro Starttermin / 1. Termin Einweisung</div>
+            <div className="text-2xl font-black text-gray-900">{myKpis.seminarQuote.toFixed(2)}</div>
+            <div className="text-[10px] text-gray-400 mt-0.5">{myKpis.seminarEintragungen} aus {myKpis.anzStartTermine} Term.</div>
+            <div className={"text-xs font-medium mt-1 " + (myKpis.seminarQuote >= compareKpis.seminarQuote ? "text-emerald-600" : "text-red-500")}>
+              {myKpis.seminarQuote >= compareKpis.seminarQuote ? "▲" : "▼"} Schnitt: {compareKpis.seminarQuote.toFixed(2)}
+            </div>
+          </div>
+          {/* KPI 2: Folgetermin-Quote */}
+          <div className="text-center">
+            <div className="text-xs text-gray-500 mb-1">Folgetermin vereinbart</div>
+            <div className="text-xs text-gray-400 mb-2">Quote auf alle Termine</div>
+            <div className="text-2xl font-black text-gray-900">{(myKpis.folgeQuote * 100).toFixed(0)}%</div>
+            <div className="text-[10px] text-gray-400 mt-0.5">{myKpis.folgeTermineSet} aus {myKpis.anzTermine} Term.</div>
+            <div className={"text-xs font-medium mt-1 " + (myKpis.folgeQuote >= compareKpis.folgeQuote ? "text-emerald-600" : "text-red-500")}>
+              {myKpis.folgeQuote >= compareKpis.folgeQuote ? "▲" : "▼"} Schnitt: {(compareKpis.folgeQuote * 100).toFixed(0)}%
+            </div>
+          </div>
+          {/* KPI 3: Umsatz/Termin */}
+          <div className="text-center">
+            <div className="text-xs text-gray-500 mb-1">Umsatz/Termin</div>
+            <div className="text-xs text-gray-400 mb-2">nur Einzeltermine</div>
+            <div className="text-2xl font-black text-gray-900">{myKpis.umsatzProTermin.toFixed(0)}€</div>
+            <div className="text-[10px] text-gray-400 mt-0.5">{myKpis.umsatz.toFixed(0)}€ aus {myKpis.anzEinzelTermine} T.</div>
+            <div className={"text-xs font-medium mt-1 " + (myKpis.umsatzProTermin >= compareKpis.umsatzProTermin ? "text-emerald-600" : "text-red-500")}>
+              {myKpis.umsatzProTermin >= compareKpis.umsatzProTermin ? "▲" : "▼"} Schnitt: {compareKpis.umsatzProTermin.toFixed(0)}€
+            </div>
+          </div>
+        </div>
+      </div>
+      {/* ============== ENDE 3-KPI-BLOCK ============== */}
+      {sp.length > 0 && <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4"><div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Produkt-Ranking {kat !== "Alle" ? "· " + kat : ""}</div><div className="space-y-2">{sp.map(function(p) { var ep = p.count > 0 ? (p.umsatz / p.count) : 0; return (<div key={p.id} className="flex items-center gap-3">
+        <div className="w-44 text-xs text-gray-600 truncate flex-shrink-0">{p.name} <span className="text-gray-400">({ep.toFixed(0)}€/St.)</span></div>
+        <div className="flex-1 h-5 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-emerald-500 rounded-full" style={{ width: Math.max((p.count / mx) * 100, 0) + "%", minWidth: p.count > 0 ? "8px" : "0" }}></div></div>
+        <div className="text-xs font-bold text-gray-700 w-6 text-right">{p.count}x</div>
+        <div className="text-xs text-emerald-600 font-bold w-14 text-right">{p.umsatz.toFixed(0)}€</div>
+      </div>); })}</div></div>}
+      {(isL || isAdmin) && Object.keys(tc).length > 0 && (<div className="bg-white border border-gray-200 rounded-lg p-4 mb-4"><div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Trainer-Performance {kat !== "Alle" ? "· " + kat : ""}</div><div className="space-y-3">{Object.entries(tc).sort(function(a,b) { return b[1].u - a[1].u; }).map(function(entry) { var n = entry[0]; var d = entry[1]; var prods = tp[n] ? Object.values(tp[n]).sort(function(a,b) { return b.count - a.count; }) : []; return (<div key={n} className="border-b border-gray-100 pb-3 last:border-0">
+        <div className="flex items-center justify-between text-sm mb-1"><span className="text-gray-700 font-medium">{n}</span><div className="flex gap-4 text-xs"><span className="text-gray-500">{d.c} Termine</span><span className="text-gray-700 font-bold">{d.v} Verkäufe</span><span className="text-emerald-600 font-bold">{d.u.toFixed(0)}€</span><span className="text-gray-400">Ø {d.c ? (d.u / d.c).toFixed(0) : 0}€/Termin</span></div></div>
+        {prods.length > 0 && <div className="ml-4 space-y-0.5">{prods.map(function(pr) { return <div key={pr.name} className="text-xs text-gray-400 flex justify-between"><span>{pr.name}</span><span>{pr.count}x · {(pr.count * pr.preis).toFixed(0)}€</span></div>; })}</div>}
+      </div>); })}</div></div>)}
+      <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4"><div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Terminarten-Übersicht (alle, im Zeitraum)</div><div className="flex gap-6 flex-wrap">{Object.entries(ac).sort(function(a,b) { return b[1] - a[1]; }).map(function(entry) { return (<div key={entry[0]} className="text-center"><div className="text-lg font-black text-gray-900">{entry[1]}</div><div className="text-xs text-gray-500">{entry[0]}</div></div>); })}</div></div>
+      {(isL || isAdmin) && Object.keys(sv).length > 0 && (<div className="bg-white border border-amber-200 rounded-lg p-4 mb-4">
+        <div className="text-xs font-bold text-amber-600 uppercase tracking-wider mb-3">Studio-Vergleich {kat !== "Alle" ? "· " + kat : "(alle Standorte)"}</div>
+        <div className="space-y-2">{Object.entries(sv).sort(function(a,b) { return b[1].umsatz - a[1].umsatz; }).map(function(entry) { var s = entry[0]; var d = entry[1]; return (
+          <div key={s} className={"flex items-center justify-between text-sm border-b border-gray-100 pb-2 last:border-0 " + (s === trainer.studio ? "font-bold" : "")}>
+            <span className="text-gray-700">{s} {s === trainer.studio ? "(dein Studio)" : ""}</span>
+            <div className="flex gap-4 text-xs">
+              <span className="text-gray-500">{d.termine} Termine</span>
+              <span className="text-gray-700 font-bold">{d.verkaufe} Verkäufe</span>
+              <span className="text-emerald-600 font-bold">{d.umsatz.toFixed(0)}€</span>
+              <span className="text-gray-400">Ø {d.termine ? (d.umsatz / d.termine).toFixed(0) : 0}€/T</span>
+            </div>
+          </div>); })}</div>
+      </div>)}
+      {(isL || isAdmin) && (<div className="bg-white border border-gray-200 rounded-lg p-4">
+        <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Excel-Downloads</div>
+        <div className="grid grid-cols-2 gap-2">
+          <button onClick={function() {
+            // === MONATSREPORT als Excel ===
+            var wb = XLSX.utils.book_new();
+            // Sheet 1: Kennzahlen
+            var rows1 = [
+              ["Studio", trainer.studio],
+              ["Zeitraum", (von || "Gesamt") + " bis " + (bis || "heute")],
+              ["", ""],
+              ["KENNZAHLEN", ""],
+              ["Termine", data.length],
+              ["Verkäufe", totalV],
+              ["Gesamtumsatz €", Number(totalU.toFixed(2))],
+              ["Ø Umsatz/Termin €", data.length ? Number((totalU / data.length).toFixed(2)) : 0],
+              ["", ""],
+              ["3-KPI-BENCHMARK", "Wert · Studio/Vergleich"],
+              ["Seminareintragungen pro Starttermin", myKpis.seminarQuote.toFixed(2) + " (" + myKpis.seminarEintragungen + " aus " + myKpis.anzStartTermine + ")"],
+              ["  Vergleich (" + compareLabel + ")", compareKpis.seminarQuote.toFixed(2)],
+              ["Folgetermin-Quote", (myKpis.folgeQuote * 100).toFixed(0) + "% (" + myKpis.folgeTermineSet + " aus " + myKpis.anzTermine + ")"],
+              ["  Vergleich", (compareKpis.folgeQuote * 100).toFixed(0) + "%"],
+              ["Umsatz/Termin", myKpis.umsatzProTermin.toFixed(0) + "€"],
+              ["  Vergleich", compareKpis.umsatzProTermin.toFixed(0) + "€"]
+            ];
+            var ws1 = XLSX.utils.aoa_to_sheet(rows1);
+            ws1["!cols"] = [{wch:38}, {wch:30}];
+            XLSX.utils.book_append_sheet(wb, ws1, "Kennzahlen");
+            // Sheet 2: Top Produkte
+            var rows2 = [["Produkt", "Anzahl", "Umsatz €", "Ø €/Stück"]];
+            sp.forEach(function(p) { rows2.push([p.name, p.count, Number(p.umsatz.toFixed(2)), p.count > 0 ? Number((p.umsatz / p.count).toFixed(2)) : 0]); });
+            var ws2 = XLSX.utils.aoa_to_sheet(rows2);
+            ws2["!cols"] = [{wch:35}, {wch:8}, {wch:12}, {wch:12}];
+            XLSX.utils.book_append_sheet(wb, ws2, "Produkte");
+            // Sheet 3: Trainer-Performance (wenn Leitung/Admin und Daten vorhanden)
+            if (Object.keys(tc).length > 0) {
+              var rows3 = [["Trainer", "Termine", "Verkäufe", "Umsatz €", "Ø €/Termin"]];
+              Object.entries(tc).sort(function(a,b) { return b[1].u - a[1].u; }).forEach(function(entry) {
+                var n = entry[0]; var d = entry[1];
+                rows3.push([n, d.c, d.v, Number(d.u.toFixed(2)), d.c > 0 ? Number((d.u / d.c).toFixed(2)) : 0]);
+              });
+              var ws3 = XLSX.utils.aoa_to_sheet(rows3);
+              ws3["!cols"] = [{wch:25}, {wch:10}, {wch:10}, {wch:12}, {wch:12}];
+              XLSX.utils.book_append_sheet(wb, ws3, "Trainer");
+            }
+            // Sheet 4: Studio-Vergleich (wenn Daten vorhanden)
+            if (Object.keys(sv).length > 0) {
+              var rows4 = [["Studio", "Termine", "Verkäufe", "Umsatz €", "Ø €/Termin"]];
+              Object.entries(sv).sort(function(a,b) { return b[1].umsatz - a[1].umsatz; }).forEach(function(entry) {
+                var s = entry[0]; var d = entry[1];
+                rows4.push([s, d.termine, d.verkaufe, Number(d.umsatz.toFixed(2)), d.termine > 0 ? Number((d.umsatz / d.termine).toFixed(2)) : 0]);
+              });
+              var ws4 = XLSX.utils.aoa_to_sheet(rows4);
+              ws4["!cols"] = [{wch:18}, {wch:10}, {wch:10}, {wch:12}, {wch:12}];
+              XLSX.utils.book_append_sheet(wb, ws4, "Studios");
+            }
+            var fname = "Monatsreport_" + trainer.studio + "_" + new Date().toISOString().slice(0,10) + ".xlsx";
+            XLSX.writeFile(wb, fname);
+          }} className="px-3 py-2.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-xs font-bold rounded-lg transition-colors">📊 Monatsreport (Kennzahlen)</button>
+          <button onClick={function() {
+            // === ALLE TERMINE als Excel ===
+            // Scope: gleiche Daten wie aktuelles Dashboard (Zeitraum-Filter)
+            // Nutzt 'dataAll' für alle Einzeltermine + Fitexpresse
+            var allTermineForExport;
+            if (isAdmin) {
+              // Admin: ALLE Studios im Zeitraum (cross-studio)
+              allTermineForExport = erfolge.filter(inZeitraum);
+            } else if (isL) {
+              // Leitung: ganzes Studio
+              allTermineForExport = baseData.filter(inZeitraum);
+            } else {
+              // Trainer: nur eigene
+              allTermineForExport = baseData.filter(inZeitraum);
+            }
+            allTermineForExport = allTermineForExport.slice().sort(function(a, b) { return new Date(a.datum) - new Date(b.datum); });
+
+            if (allTermineForExport.length === 0) {
+              alert("Keine Termine im aktuellen Zeitraum.");
+              return;
+            }
+
+            var tartLabelLocal = function(id) { var t = tartListDash.find(function(x) { return x.id === id; }); return t ? t.label : id; };
+            var tartIsGruppeLocal = function(id) { var t = tartListDash.find(function(x) { return x.id === id; }); return t ? t.is_gruppentermin === true : false; };
+
+            var rows = [["Datum", "Wochentag", "Nr.", "Studio", "Trainer", "Terminart", "Gruppe", "Teilnehmer", "Erfolge (Verkäufe + Aktivitäten)", "Anzahl Items", "Umsatz €"]];
+            var wTage = ["Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"];
+            allTermineForExport.forEach(function(e) {
+              var dDate = new Date(e.datum);
+              var verk = e.verkauft || [];
+              // Erfolge zusammenfassen: gleiche IDs zählen, dann "Name (xN)" wenn >1
+              var counts = {};
+              verk.forEach(function(v) { var id = v.id || v; var nm = v.name || v; counts[id] = counts[id] || { name: nm, c: 0 }; counts[id].c++; });
+              var verkText = Object.values(counts).map(function(x) { return x.c > 1 ? x.name + " ×" + x.c : x.name; }).join(", ");
+              // Umsatz nur aus echten Verkäufen (keine Aktivitäten)
+              var umsatz = verk.reduce(function(s, v) { var id = v.id || v; if (isAktivitaet(id)) return s; return s + (Number(v.preis) || 0); }, 0);
+              rows.push([
+                dDate.toLocaleDateString("de-DE"),
+                wTage[dDate.getDay()],
+                e.nummer || "",
+                e.studio || "",
+                e.trainer || "",
+                tartLabelLocal(e.terminart),
+                tartIsGruppeLocal(e.terminart) ? "Ja" : "Nein",
+                e.teilnehmer_anzahl != null ? e.teilnehmer_anzahl : "",
+                verkText,
+                verk.length,
+                Number(umsatz.toFixed(2))
+              ]);
+            });
+
+            var wb2 = XLSX.utils.book_new();
+            var wsT = XLSX.utils.aoa_to_sheet(rows);
+            wsT["!cols"] = [{wch:12},{wch:11},{wch:5},{wch:12},{wch:18},{wch:25},{wch:8},{wch:11},{wch:50},{wch:8},{wch:10}];
+            XLSX.utils.book_append_sheet(wb2, wsT, "Alle Termine");
+            var scopeLabel = isAdmin ? "alle_Studios" : trainer.studio;
+            var fname = "Termine_" + scopeLabel + "_" + (von || "alle") + "_bis_" + (bis || new Date().toISOString().slice(0,10)) + ".xlsx";
+            XLSX.writeFile(wb2, fname);
+          }} className="px-3 py-2.5 bg-blue-100 hover:bg-blue-200 text-blue-800 text-xs font-bold rounded-lg transition-colors">📋 Alle Termine (Detail)</button>
+        </div>
+        <p className="text-xs text-gray-400 mt-2">Beide Downloads basieren auf dem aktuellen Zeitraum-Filter ({von || "Anfang"} bis {bis || "heute"}).{isAdmin && " · Termine-Export = alle Studios."}</p>
+      </div>)}
+      </div>)}
+    </div>)}
+
+    <div className="bg-white border border-emerald-200 rounded-lg p-4 mt-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-xs font-bold text-emerald-700 uppercase tracking-wider">Fitexpresse · {trainer.studio}</div>
+        <div className="text-xs text-gray-400">Zeitraum-Filter aktiv · andere Filter wirken hier nicht</div>
+      </div>
+      {fxTotalCount === 0 ? (
+        <div className="text-center py-6 text-gray-400 text-sm">Keine Fitexpresse im Zeitraum.</div>
+      ) : (
+        <div>
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <div className="text-center p-3 bg-emerald-50 rounded-lg"><div className="text-2xl font-black text-emerald-700">{fxTotalCount}</div><div className="text-xs text-gray-600 mt-1">Fitexpresse</div></div>
+            <div className="text-center p-3 bg-emerald-50 rounded-lg"><div className="text-2xl font-black text-emerald-700">{fxTotalTeilnehmer}</div><div className="text-xs text-gray-600 mt-1">Teilnehmer gesamt</div></div>
+            <div className="text-center p-3 bg-emerald-50 rounded-lg"><div className="text-2xl font-black text-emerald-700">{fxAvg.toFixed(1)}</div><div className="text-xs text-gray-600 mt-1">Ø Teilnehmer/Fitexpress</div></div>
+          </div>
+          <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Pro Trainer</div>
+          <div className="space-y-2 mb-4">
+            {fxTrainerList.map(function(t) { return (<div key={t.name} className="flex items-center gap-3">
+              <div className="w-32 text-xs text-gray-700 truncate flex-shrink-0">{t.name}</div>
+              <div className="flex-1 h-5 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-emerald-500 rounded-full" style={{ width: Math.max((t.avg / fxMaxAvg) * 100, 0) + "%", minWidth: t.count > 0 ? "8px" : "0" }}></div></div>
+              <div className="text-xs text-gray-500 w-20 text-right">{t.count} × Express</div>
+              <div className="text-xs text-gray-700 w-20 text-right">{t.total} TN ges.</div>
+              <div className="text-xs font-bold text-emerald-600 w-16 text-right">Ø {t.avg.toFixed(1)}</div>
+            </div>); })}
+          </div>
+          <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Einzeln (chronologisch)</div>
+          <div className="max-h-60 overflow-y-auto space-y-1">
+            {fitexpressData.slice().sort(function(a, b) { return new Date(b.datum) - new Date(a.datum); }).map(function(e) { return (<div key={e.id} className="flex items-center justify-between text-xs px-2 py-1 hover:bg-gray-50 rounded">
+              <div className="flex items-center gap-2">
+                {e.nummer && <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold">{e.nummer}</span>}
+                <span className="text-gray-400">{new Date(e.datum).toLocaleDateString("de-DE")}</span>
+                <span className="text-gray-700">{e.trainer}</span>
+              </div>
+              <div className="text-emerald-600 font-bold">{e.teilnehmer_anzahl || 0} TN</div>
+            </div>); })}
+          </div>
+        </div>
+      )}
+    </div>
+
+  </div>);
+}
+
+function TerminartenView({ terminarten, setTerminarten, erfolge, setErfolge, trainer }) {
+  const [neuLabel, setNeuLabel] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [err, setErr] = useState("");
+  const [editId, setEditId] = useState(null);
+  const [editLabel, setEditLabel] = useState("");
+  const isAdmin = trainer.rolle === "admin";
+
+  // Anzahl Erfolge pro Terminart-ID (für Anzeige + Lösch-Hinweis)
+  const countMap = {};
+  erfolge.forEach(function(e) { countMap[e.terminart] = (countMap[e.terminart] || 0) + 1; });
+
+  const sorted = terminarten.slice().sort(function(a, b) { return a.label.localeCompare(b.label, "de"); });
+
+  // ID-Generator: snake_case aus Label, mit Timestamp-Suffix für Eindeutigkeit
+  const makeId = function(label) {
+    var slug = label.toLowerCase()
+      .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 30);
+    if (!slug) slug = "termin";
+    return "t_" + slug + "_" + Date.now().toString().slice(-6);
+  };
+
+  const addTart = async function() {
+    setErr("");
+    var label = neuLabel.trim();
+    if (!label) { setErr("Bezeichnung darf nicht leer sein"); return; }
+    if (terminarten.find(function(t) { return t.label.toLowerCase() === label.toLowerCase(); })) {
+      setErr("Diese Terminart gibt es bereits"); return;
+    }
+    setCreating(true);
+    var newId = makeId(label);
+    const res = await sb.from("terminarten").insert([{ id: newId, label: label, aktiv: true }]).select().single();
+    setCreating(false);
+    if (res.error) { setErr("Fehler: " + res.error.message); return; }
+    setTerminarten(function(prev) { return prev.concat([res.data]); });
+    setNeuLabel("");
+  };
+
+  const startEdit = function(t) {
+    setEditId(t.id); setEditLabel(t.label); setErr("");
+  };
+
+  const saveEdit = async function() {
+    setErr("");
+    var label = editLabel.trim();
+    if (!label) { setErr("Bezeichnung darf nicht leer sein"); return; }
+    var alt = terminarten.find(function(t) { return t.id === editId; });
+    if (!alt) return;
+    if (label === alt.label) { setEditId(null); return; }
+    if (terminarten.find(function(t) { return t.id !== editId && t.label.toLowerCase() === label.toLowerCase(); })) {
+      setErr("Diese Terminart gibt es bereits"); return;
+    }
+    const res = await sb.from("terminarten").update({ label: label }).eq("id", editId);
+    if (res.error) { setErr("Fehler: " + res.error.message); return; }
+    setTerminarten(function(prev) { return prev.map(function(t) { return t.id === editId ? Object.assign({}, t, { label: label }) : t; }); });
+    setEditId(null);
+  };
+
+  const delTart = async function(t) {
+    setErr("");
+    if (t.id === "t_sonstige") { setErr("Die Terminart 'Sonstige' kann nicht gelöscht werden — sie ist der Fallback."); return; }
+    var n = countMap[t.id] || 0;
+    var msg = n > 0
+      ? "Terminart '" + t.label + "' löschen?\n\n" + n + " Erfolg(e) werden auf 'Sonstige' verschoben."
+      : "Terminart '" + t.label + "' löschen?";
+    if (!confirm(msg)) return;
+    if (n > 0) {
+      const res1 = await sb.from("erfolge").update({ terminart: "t_sonstige" }).eq("terminart", t.id);
+      if (res1.error) { setErr("Fehler beim Umhängen der Erfolge: " + res1.error.message); return; }
+      setErfolge(function(prev) { return prev.map(function(e) { return e.terminart === t.id ? Object.assign({}, e, { terminart: "t_sonstige" }) : e; }); });
+    }
+    const res2 = await sb.from("terminarten").delete().eq("id", t.id);
+    if (res2.error) { setErr("Fehler beim Löschen: " + res2.error.message); return; }
+    setTerminarten(function(prev) { return prev.filter(function(x) { return x.id !== t.id; }); });
+  };
+
+  const toggleGruppe = async function(t) {
+    setErr("");
+    var newVal = !t.is_gruppentermin;
+    const res = await sb.from("terminarten").update({ is_gruppentermin: newVal }).eq("id", t.id);
+    if (res.error) { setErr("Fehler: " + res.error.message); return; }
+    setTerminarten(function(prev) { return prev.map(function(x) { return x.id === t.id ? Object.assign({}, x, { is_gruppentermin: newVal }) : x; }); });
+  };
+
+  return (<div className="max-w-2xl mx-auto p-4">
+    <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Terminarten verwalten</div>
+
+    {!isAdmin && (
+      <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+        <div className="font-bold mb-1">Nur-Lese-Modus</div>
+        <div>Anlegen, Umbenennen und Löschen von Terminarten ist nur Admins erlaubt.</div>
+      </div>
+    )}
+
+    {isAdmin && (
+      <div className="mb-4 p-4 bg-white border border-gray-200 rounded-lg">
+        <label className="text-xs text-gray-500">Neue Terminart</label>
+        <div className="flex gap-2 mt-1">
+          <input value={neuLabel} onChange={function(e) { setNeuLabel(e.target.value); }} placeholder="z.B. Probetraining" className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none" />
+          <button onClick={addTart} disabled={creating || !neuLabel.trim()} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-300 text-white text-xs font-bold rounded-lg">{creating ? "..." : "+ Anlegen"}</button>
+        </div>
+      </div>
+    )}
+
+    {err && <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">{err}</div>}
+
+    <div className="space-y-1">
+      {sorted.map(function(t) {
+        var n = countMap[t.id] || 0;
+        var isSonstige = t.id === "t_sonstige";
+        return (<div key={t.id} className="flex items-center justify-between px-3 py-2 bg-white border border-gray-200 rounded-lg">
+          {editId === t.id ? (
+            <div className="flex-1 flex gap-2">
+              <input value={editLabel} onChange={function(e) { setEditLabel(e.target.value); }} className="flex-1 px-2 py-1 border border-emerald-300 rounded text-sm focus:border-emerald-500 focus:outline-none" autoFocus />
+              <button onClick={saveEdit} className="px-3 py-1 bg-emerald-600 text-white text-xs font-bold rounded">Speichern</button>
+              <button onClick={function() { setEditId(null); }} className="px-3 py-1 bg-gray-200 text-gray-700 text-xs font-bold rounded">Abbrechen</button>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-gray-800">{t.label}</span>
+                {isSonstige && <span className="text-xs text-gray-400">(Fallback)</span>}
+                {t.is_gruppentermin && <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">Gruppe</span>}
+                <span className="text-xs text-gray-400">{n} Erfolg{n === 1 ? "" : "e"}</span>
+              </div>
+              {isAdmin && <div className="flex items-center gap-1">
+                {!isSonstige && <button onClick={function() { toggleGruppe(t); }} title={t.is_gruppentermin ? "Als Einzeltermin markieren" : "Als Gruppentermin markieren"} className="text-xs text-gray-400 hover:text-emerald-600 px-2">{t.is_gruppentermin ? "👥" : "👤"}</button>}
+                <button onClick={function() { startEdit(t); }} title="Umbenennen" className="text-xs text-gray-400 hover:text-emerald-600 px-2">&#9998;</button>
+                {!isSonstige && <button onClick={function() { delTart(t); }} title="Löschen" className="text-xs text-gray-400 hover:text-red-600 px-2">×</button>}
+              </div>}
+            </>
+          )}
+        </div>);
+      })}
+    </div>
+
+    <div className="mt-6 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">
+      <div className="font-bold mb-1">Hinweis</div>
+      <div>Beim Löschen einer Terminart werden alle dranhängenden Erfolge automatisch auf 'Sonstige' verschoben. Die Terminart 'Sonstige' selbst kann nicht gelöscht werden.</div>
+    </div>
+  </div>);
+}
+
+function KategorienView({ kategorien, setKategorien, produkte, setProdukte }) {
+  const [neuName, setNeuName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [err, setErr] = useState("");
+  const [editId, setEditId] = useState(null);
+  const [editName, setEditName] = useState("");
+
+  // Anzahl Produkte pro Kategorie (für Anzeige + Lösch-Logik)
+  const countMap = {};
+  produkte.forEach(function(p) { countMap[p.kategorie] = (countMap[p.kategorie] || 0) + 1; });
+
+  const sorted = kategorien.slice().sort(function(a, b) { return (a.sortierung || 0) - (b.sortierung || 0); });
+
+  const addKat = async function() {
+    setErr("");
+    var name = neuName.trim();
+    if (!name) { setErr("Name darf nicht leer sein"); return; }
+    if (kategorien.find(function(k) { return k.name.toLowerCase() === name.toLowerCase(); })) {
+      setErr("Diese Kategorie gibt es bereits"); return;
+    }
+    setCreating(true);
+    var maxSort = kategorien.reduce(function(m, k) { return Math.max(m, k.sortierung || 0); }, 0);
+    var sortVal = maxSort < 999 ? maxSort + 10 : 100;
+    const res = await sb.from("kategorien").insert([{ name: name, sortierung: sortVal }]).select().single();
+    setCreating(false);
+    if (res.error) { setErr("Fehler: " + res.error.message); return; }
+    setKategorien(function(prev) { return prev.concat([res.data]); });
+    setNeuName("");
+  };
+
+  const startEdit = function(k) {
+    setEditId(k.id); setEditName(k.name); setErr("");
+  };
+
+  const saveEdit = async function() {
+    setErr("");
+    var name = editName.trim();
+    if (!name) { setErr("Name darf nicht leer sein"); return; }
+    var alt = kategorien.find(function(k) { return k.id === editId; });
+    if (!alt) return;
+    if (name === alt.name) { setEditId(null); return; }
+    if (kategorien.find(function(k) { return k.id !== editId && k.name.toLowerCase() === name.toLowerCase(); })) {
+      setErr("Diese Kategorie gibt es bereits"); return;
+    }
+    // Erst Kategorie umbenennen, dann alle Produkte mit altem Namen umhängen
+    const res1 = await sb.from("kategorien").update({ name: name }).eq("id", editId);
+    if (res1.error) { setErr("Fehler: " + res1.error.message); return; }
+    const res2 = await sb.from("produkte").update({ kategorie: name }).eq("kategorie", alt.name);
+    if (res2.error) { setErr("Kategorie umbenannt, aber Produkte-Update fehlgeschlagen: " + res2.error.message); return; }
+    setKategorien(function(prev) { return prev.map(function(k) { return k.id === editId ? Object.assign({}, k, { name: name }) : k; }); });
+    setProdukte(function(prev) { return prev.map(function(p) { return p.kategorie === alt.name ? Object.assign({}, p, { kategorie: name }) : p; }); });
+    setEditId(null);
+  };
+
+  const delKat = async function(k) {
+    setErr("");
+    if (k.name === "Sonstige") { setErr("Die Kategorie 'Sonstige' kann nicht gelöscht werden — sie ist der Fallback."); return; }
+    var n = countMap[k.name] || 0;
+    var msg = n > 0
+      ? "Kategorie '" + k.name + "' löschen?\n\n" + n + " Produkt(e) werden auf 'Sonstige' verschoben."
+      : "Kategorie '" + k.name + "' löschen?";
+    if (!confirm(msg)) return;
+    if (n > 0) {
+      const res1 = await sb.from("produkte").update({ kategorie: "Sonstige" }).eq("kategorie", k.name);
+      if (res1.error) { setErr("Fehler beim Umhängen der Produkte: " + res1.error.message); return; }
+      setProdukte(function(prev) { return prev.map(function(p) { return p.kategorie === k.name ? Object.assign({}, p, { kategorie: "Sonstige" }) : p; }); });
+    }
+    const res2 = await sb.from("kategorien").delete().eq("id", k.id);
+    if (res2.error) { setErr("Fehler beim Löschen: " + res2.error.message); return; }
+    setKategorien(function(prev) { return prev.filter(function(x) { return x.id !== k.id; }); });
+  };
+
+  return (<div className="max-w-2xl mx-auto p-4">
+    <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Produkt-Kategorien verwalten</div>
+
+    <div className="mb-4 p-4 bg-white border border-gray-200 rounded-lg">
+      <label className="text-xs text-gray-500">Neue Kategorie</label>
+      <div className="flex gap-2 mt-1">
+        <input value={neuName} onChange={function(e) { setNeuName(e.target.value); }} placeholder="z.B. Ernährungsberatung" className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none" />
+        <button onClick={addKat} disabled={creating || !neuName.trim()} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-300 text-white text-xs font-bold rounded-lg">{creating ? "..." : "+ Anlegen"}</button>
+      </div>
+    </div>
+
+    {err && <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">{err}</div>}
+
+    <div className="space-y-1">
+      {sorted.map(function(k) {
+        var n = countMap[k.name] || 0;
+        var isSonstige = k.name === "Sonstige";
+        return (<div key={k.id} className="flex items-center justify-between px-3 py-2 bg-white border border-gray-200 rounded-lg">
+          {editId === k.id ? (
+            <div className="flex-1 flex gap-2">
+              <input value={editName} onChange={function(e) { setEditName(e.target.value); }} className="flex-1 px-2 py-1 border border-emerald-300 rounded text-sm focus:border-emerald-500 focus:outline-none" autoFocus />
+              <button onClick={saveEdit} className="px-3 py-1 bg-emerald-600 text-white text-xs font-bold rounded">Speichern</button>
+              <button onClick={function() { setEditId(null); }} className="px-3 py-1 bg-gray-200 text-gray-700 text-xs font-bold rounded">Abbrechen</button>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-gray-800">{k.name}</span>
+                {isSonstige && <span className="text-xs text-gray-400">(Fallback)</span>}
+                <span className="text-xs text-gray-400">{n} Produkt{n === 1 ? "" : "e"}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <button onClick={function() { startEdit(k); }} title="Umbenennen" className="text-xs text-gray-400 hover:text-emerald-600 px-2">&#9998;</button>
+                {!isSonstige && <button onClick={function() { delKat(k); }} title="Löschen" className="text-xs text-gray-400 hover:text-red-600 px-2">×</button>}
+              </div>
+            </>
+          )}
+        </div>);
+      })}
+    </div>
+
+    <div className="mt-6 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">
+      <div className="font-bold mb-1">Hinweis</div>
+      <div>Beim Löschen einer Kategorie werden alle darin enthaltenen Produkte automatisch in 'Sonstige' verschoben. Umbenennen aktualisiert auch alle Produkte, die diese Kategorie nutzen.</div>
+    </div>
+  </div>);
+}
+
+function BerichteView({ trainer, users, erfolge, terminarten, produkte }) {
+  const isAdmin = trainer.rolle === "admin";
+  const isLeitung = trainer.rolle === "leitung";
+  const isTrainer = trainer.rolle === "trainer";
+  const today = new Date();
+  const [year, setYear] = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth() + 1); // 1-12
+  const [targetTrainerId, setTargetTrainerId] = useState(trainer.id);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const tartLabel = function(id) { var t = (terminarten || []).find(function(x) { return x.id === id; }); return t ? t.label : id; };
+  const tartIsGruppe = function(id) { var t = (terminarten || []).find(function(x) { return x.id === id; }); return t ? t.is_gruppentermin === true : false; };
+
+  // Wer darf welchen Bericht ziehen:
+  // - Trainer: nur sich selbst
+  // - Leitung: alle im eigenen Studio
+  // - Admin: alle
+  const selectableUsers = isAdmin
+    ? users
+    : isLeitung
+      ? users.filter(function(u) { return u.studio === trainer.studio; })
+      : users.filter(function(u) { return u.id === trainer.id; });
+
+  const monthLabels = ["Januar","Februar","März","April","Mai","Juni","Juli","August","September","Oktober","November","Dezember"];
+  const yearOptions = [];
+  for (var y = today.getFullYear(); y >= today.getFullYear() - 2; y--) yearOptions.push(y);
+
+  const generate = async function() {
+    setErr(""); setBusy(true);
+    try {
+      var target = users.find(function(u) { return u.id === targetTrainerId; });
+      if (!target) { setErr("Trainer nicht gefunden."); setBusy(false); return; }
+
+      // Zeitraum: vom 1. des Monats bis zum letzten Tag des Monats inklusive
+      var von = new Date(year, month - 1, 1, 0, 0, 0);
+      var bis = new Date(year, month, 0, 23, 59, 59);
+
+      // Bericht-Erfolge filtern
+      var data = erfolge.filter(function(e) {
+        if (e.trainer_id !== targetTrainerId) return false;
+        var d = new Date(e.datum);
+        return d >= von && d <= bis;
+      }).sort(function(a, b) { return new Date(a.datum) - new Date(b.datum); });
+
+      if (data.length === 0) {
+        setErr("Keine Erfolge im gewählten Zeitraum für " + target.name + ".");
+        setBusy(false);
+        return;
+      }
+
+      // Sheet 1: Termine (Detailliste)
+      var rows1 = [["Datum", "Nr.", "Studio", "Terminart", "Gruppe", "Teilnehmer", "Verkäufe", "Anzahl Verkäufe", "Umsatz €"]];
+      data.forEach(function(e) {
+        var dDate = new Date(e.datum);
+        var verk = e.verkauft || [];
+        var verkNamen = verk.map(function(v) { return v.name || v.id || ""; }).join(", ");
+        var verkSum = verk.reduce(function(s, v) { return s + (Number(v.preis) || 0); }, 0);
+        rows1.push([
+          dDate.toLocaleDateString("de-DE"),
+          e.nummer || "",
+          e.studio || "",
+          tartLabel(e.terminart),
+          tartIsGruppe(e.terminart) ? "Ja" : "Nein",
+          e.teilnehmer_anzahl != null ? e.teilnehmer_anzahl : "",
+          verkNamen,
+          verk.length,
+          Number(verkSum.toFixed(2))
+        ]);
+      });
+
+      // Sheet 2: Zusammenfassung (KPIs)
+      var einzelData = data.filter(function(e) { return !tartIsGruppe(e.terminart); });
+      var gruppenData = data.filter(function(e) { return tartIsGruppe(e.terminart); });
+      var totalVerkaufe = 0, totalUmsatz = 0;
+      data.forEach(function(e) {
+        (e.verkauft || []).forEach(function(v) {
+          totalVerkaufe++;
+          totalUmsatz += Number(v.preis) || 0;
+        });
+      });
+      var totalTeilnehmer = gruppenData.reduce(function(s, e) { return s + (e.teilnehmer_anzahl || 0); }, 0);
+      var avgTeilnehmer = gruppenData.length > 0 ? (totalTeilnehmer / gruppenData.length) : 0;
+
+      var rows2 = [
+        ["Trainer", target.name],
+        ["Heimatstudio", target.studio],
+        ["Berichtszeitraum", monthLabels[month - 1] + " " + year],
+        ["", ""],
+        ["Termine gesamt", data.length],
+        ["  davon Einzeltermine", einzelData.length],
+        ["  davon Gruppentermine", gruppenData.length],
+        ["", ""],
+        ["Verkäufe gesamt", totalVerkaufe],
+        ["Umsatz gesamt €", Number(totalUmsatz.toFixed(2))],
+        ["Ø Umsatz/Termin €", einzelData.length > 0 ? Number((totalUmsatz / einzelData.length).toFixed(2)) : 0],
+        ["", ""],
+        ["Teilnehmer gesamt (Gruppen)", totalTeilnehmer],
+        ["Ø Teilnehmer/Gruppentermin", Number(avgTeilnehmer.toFixed(1))]
+      ];
+
+      // Sheet 3: Pro Terminart aufschlüsseln
+      var byArt = {};
+      data.forEach(function(e) {
+        var l = tartLabel(e.terminart);
+        if (!byArt[l]) byArt[l] = { count: 0, verkaufe: 0, umsatz: 0, teilnehmer: 0, gruppe: tartIsGruppe(e.terminart) };
+        byArt[l].count++;
+        if (e.teilnehmer_anzahl != null) byArt[l].teilnehmer += e.teilnehmer_anzahl;
+        (e.verkauft || []).forEach(function(v) {
+          byArt[l].verkaufe++;
+          byArt[l].umsatz += Number(v.preis) || 0;
+        });
+      });
+      var rows3 = [["Terminart", "Anzahl", "Gruppentermin", "Teilnehmer ges.", "Verkäufe", "Umsatz €"]];
+      Object.keys(byArt).sort().forEach(function(l) {
+        var x = byArt[l];
+        rows3.push([
+          l, x.count, x.gruppe ? "Ja" : "Nein",
+          x.gruppe ? x.teilnehmer : "",
+          x.verkaufe, Number(x.umsatz.toFixed(2))
+        ]);
+      });
+
+      // Workbook bauen
+      var wb = XLSX.utils.book_new();
+      var ws1 = XLSX.utils.aoa_to_sheet(rows1);
+      ws1["!cols"] = [{wch:12},{wch:5},{wch:12},{wch:25},{wch:8},{wch:11},{wch:40},{wch:8},{wch:10}];
+      XLSX.utils.book_append_sheet(wb, ws1, "Termine");
+
+      var ws2 = XLSX.utils.aoa_to_sheet(rows2);
+      ws2["!cols"] = [{wch:30},{wch:18}];
+      XLSX.utils.book_append_sheet(wb, ws2, "Zusammenfassung");
+
+      var ws3 = XLSX.utils.aoa_to_sheet(rows3);
+      ws3["!cols"] = [{wch:30},{wch:8},{wch:14},{wch:15},{wch:10},{wch:12}];
+      XLSX.utils.book_append_sheet(wb, ws3, "Pro Terminart");
+
+      // Datei-Name
+      var fname = "Monatsbericht_" + target.name.replace(/\s+/g, "_") + "_" + year + "-" + String(month).padStart(2, "0") + ".xlsx";
+      XLSX.writeFile(wb, fname);
+    } catch (e) {
+      setErr("Fehler beim Erstellen: " + (e.message || JSON.stringify(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (<div className="max-w-2xl mx-auto p-4">
+    <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Monatsbericht</div>
+
+    <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-3">
+      <div>
+        <label className="text-xs text-gray-500 uppercase tracking-wider">Trainer</label>
+        <select value={targetTrainerId} onChange={function(e) { setTargetTrainerId(e.target.value); }} disabled={isTrainer} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none bg-white disabled:bg-gray-100">
+          {selectableUsers.sort(function(a,b) { return a.name.localeCompare(b.name, "de"); }).map(function(u) { return <option key={u.id} value={u.id}>{u.name} · {u.studio}</option>; })}
+        </select>
+        {isTrainer && <p className="text-xs text-gray-400 mt-1">Du kannst nur deinen eigenen Bericht runterladen.</p>}
+        {isLeitung && <p className="text-xs text-gray-400 mt-1">Als Leitung siehst du alle Trainer aus {trainer.studio}.</p>}
+        {isAdmin && <p className="text-xs text-gray-400 mt-1">Als Admin siehst du alle Trainer aller Studios.</p>}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs text-gray-500 uppercase tracking-wider">Monat</label>
+          <select value={month} onChange={function(e) { setMonth(parseInt(e.target.value, 10)); }} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none bg-white">
+            {monthLabels.map(function(l, i) { return <option key={i+1} value={i+1}>{l}</option>; })}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 uppercase tracking-wider">Jahr</label>
+          <select value={year} onChange={function(e) { setYear(parseInt(e.target.value, 10)); }} className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-emerald-500 focus:outline-none bg-white">
+            {yearOptions.map(function(y) { return <option key={y} value={y}>{y}</option>; })}
+          </select>
+        </div>
+      </div>
+
+      {err && <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">{err}</div>}
+
+      <button onClick={generate} disabled={busy || !targetTrainerId} className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-300 text-white text-sm font-bold rounded-lg">
+        {busy ? "Wird erstellt..." : "📥 Bericht als Excel herunterladen"}
+      </button>
+    </div>
+
+    <div className="mt-6 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">
+      <div className="font-bold mb-1">Was ist im Bericht enthalten?</div>
+      <div>Drei Tabellen-Blätter: alle Termine im Detail (mit Termin-Nr., Verkäufen, Teilnehmern), eine Zusammenfassung mit KPIs und eine Aufschlüsselung pro Terminart. Bei Gruppenterminen ist die Teilnehmerzahl statt Mitgliedsdaten erfasst.</div>
+    </div>
+  </div>);
+}
+
+function App() {
+  const [view, setView] = useState("briefing");
+  const [trainer, setTrainer] = useState(null);
+  const [aktivesStudio, setAktivesStudio] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [showProfil, setShowProfil] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [produkte, setProdukte] = useState([]);
+  const [verfuegbarkeit, setVerfuegbarkeit] = useState([]);
+  const [erfolge, setErfolge] = useState([]);
+  const [ziele, setZiele] = useState([]);
+  const [kategorien, setKategorien] = useState([]);
+  const [terminarten, setTerminarten] = useState([]);
+  const [studioTipps, setStudioTipps] = useState("");
+  const [ready, setReady] = useState(false);
+  const [erfolgeFullLoad, setErfolgeFullLoad] = useState(false);
+  const [erfolgeReloading, setErfolgeReloading] = useState(false);
+
+  // Auth-State: lädt Profil aus users-Tabelle für aktuellen Auth-User
+  const loadProfile = async function(authUser) {
+    if (!authUser) { setTrainer(null); setAktivesStudio(null); return; }
+    const res = await sb.from("users").select("*").eq("id", authUser.id).single();
+    if (res.data) {
+      const t = { id: res.data.id, name: res.data.name, studio: res.data.studio, rolle: res.data.rolle };
+      setTrainer(t);
+      setAktivesStudio(t.studio); // Default = Heimatstudio
+    } else {
+      setTrainer(null);
+      sb.auth.signOut();
+    }
+  };
+
+  // Beim Mount: aktuellen Session-Status prüfen + Listener registrieren
+  useEffect(function() {
+    sb.auth.getSession().then(function(res) {
+      const session = res.data.session;
+      if (session) loadProfile(session.user);
+      setAuthChecked(true);
+    });
+    const { data: listener } = sb.auth.onAuthStateChange(function(event, session) {
+      if (session) loadProfile(session.user);
+      else { setTrainer(null); setAktivesStudio(null); }
+    });
+    return function() { listener.subscription.unsubscribe(); };
+  }, []);
+
+  // Daten laden, sobald Trainer eingeloggt ist (vorher würde RLS blockieren)
+  // Erfolge: standardmäßig nur letzte 30 Tage (Egress-Optimierung).
+  // Vollladung über Toggle in Dashboard/Erfolge-Historie.
+  useEffect(function() {
+    if (!trainer) { setReady(false); return; }
+    var thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    var erfolgeQuery = erfolgeFullLoad
+      ? sb.from("erfolge").select("*")
+      : sb.from("erfolge").select("*").gte("datum", thirtyDaysAgo);
+    Promise.all([
+      sb.from("users").select("*"),
+      sb.from("produkte").select("*"),
+      erfolgeQuery,
+      sb.from("ziele").select("*"),
+      sb.from("produkt_verfuegbarkeit").select("*"),
+      sb.from("kategorien").select("*"),
+      sb.from("terminarten").select("*")
+    ]).then(function(results) {
+      if (results[0].data) setUsers(results[0].data);
+      if (results[1].data) setProdukte(results[1].data);
+      if (results[2].data) setErfolge(results[2].data);
+      if (results[3].data) setZiele(results[3].data);
+      if (results[4].data) setVerfuegbarkeit(results[4].data);
+      if (results[5].data) setKategorien(results[5].data);
+      if (results[6].data) setTerminarten(results[6].data);
+      setReady(true);
+    });
+  }, [trainer, erfolgeFullLoad]);
+
+  // Manueller Reload "Alle Erfolge laden" (Toggle aus Dashboard)
+  const reloadErfolge = function(full) {
+    setErfolgeReloading(true);
+    setErfolgeFullLoad(full);
+    // useEffect oben löst automatisch neu aus durch Dependency
+    setTimeout(function() { setErfolgeReloading(false); }, 1500);
+  };
+
+  // Studio-Tipps neu laden, wenn aktives Studio wechselt (für Briefing-Kontext)
+  useEffect(function() {
+    if (!aktivesStudio) return;
+    sb.from("studio_tipps").select("tipps").eq("studio", aktivesStudio).single().then(function(res) {
+      setStudioTipps(res.data ? (res.data.tipps || "") : "");
+    });
+  }, [aktivesStudio]);
+
+  const logout = async function() {
+    await sb.auth.signOut();
+    setTrainer(null);
+    setAktivesStudio(null);
+    setView("briefing");
+  };
+
+  if (!authChecked) return <div className="min-h-screen bg-gray-900 flex items-center justify-center"><div className="text-gray-500 text-sm">Lade...</div></div>;
+  if (!trainer) return <Login />;
+  if (!ready || !aktivesStudio) return <div className="min-h-screen bg-gray-50 flex items-center justify-center"><div className="text-gray-500 text-sm">Lade Daten...</div></div>;
+
+  // Kontext-Trainer: Heimatstudio bleibt erhalten, aber für Studio-bezogene Operationen nutzen wir aktivesStudio.
+  // ctxStudio ist das, was Views als "ihr aktuelles Studio" sehen sollen.
+  const ctx = Object.assign({}, trainer, { studio: aktivesStudio });
+
+  return (<div className="min-h-screen bg-gray-50">
+    <Nav view={view} setView={setView} trainer={trainer} aktivesStudio={aktivesStudio} setAktivesStudio={setAktivesStudio} onLogout={logout} onProfilClick={function() { setShowProfil(true); }} />
+    {showProfil && <ProfilModal trainer={trainer} onClose={function() { setShowProfil(false); }} />}
+    <div className="py-4">
+      {view === "briefing" && <BriefingView studioTipps={studioTipps} trainer={ctx} produkte={produkte} verfuegbarkeit={verfuegbarkeit} />}
+      {view === "erfolge" && <ErfolgeView trainer={trainer} aktivesStudio={aktivesStudio} produkte={produkte} verfuegbarkeit={verfuegbarkeit} erfolge={erfolge} setErfolge={setErfolge} kategorien={kategorien} terminarten={terminarten} />}
+      {view === "dashboard" && <DashboardView trainer={ctx} produkte={produkte} erfolge={erfolge} ziele={ziele} kategorien={kategorien} terminarten={terminarten} erfolgeFullLoad={erfolgeFullLoad} reloadErfolge={reloadErfolge} erfolgeReloading={erfolgeReloading} />}
+      {view === "berichte" && <BerichteView trainer={trainer} users={users} erfolge={erfolge} terminarten={terminarten} produkte={produkte} />}
+      {view === "team" && (trainer.rolle === "leitung" || trainer.rolle === "admin") && <TeamView trainer={trainer} users={users} setUsers={setUsers} />}
+      {view === "produkte" && (trainer.rolle === "leitung" || trainer.rolle === "admin") && <ProdukteView trainer={ctx} produkte={produkte} setProdukte={setProdukte} verfuegbarkeit={verfuegbarkeit} setVerfuegbarkeit={setVerfuegbarkeit} kategorien={kategorien} erfolge={erfolge} setErfolge={setErfolge} />}
+      {view === "kategorien" && (trainer.rolle === "leitung" || trainer.rolle === "admin") && <KategorienView kategorien={kategorien} setKategorien={setKategorien} produkte={produkte} setProdukte={setProdukte} />}
+      {view === "terminarten" && (trainer.rolle === "leitung" || trainer.rolle === "admin") && <TerminartenView terminarten={terminarten} setTerminarten={setTerminarten} erfolge={erfolge} setErfolge={setErfolge} trainer={trainer} />}
+      {view === "ziele" && (trainer.rolle === "leitung" || trainer.rolle === "admin") && <ZieleView trainer={ctx} produkte={produkte} verfuegbarkeit={verfuegbarkeit} ziele={ziele} setZiele={setZiele} erfolge={erfolge} />}
+      {view === "tipps" && (trainer.rolle === "leitung" || trainer.rolle === "admin") && <StudioTippsView trainer={ctx} />}
+    </div>
+  </div>);
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
